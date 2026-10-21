@@ -1,0 +1,5 @@
+name = "encodings"
+label = "Encodings"
+version = "0.1.0"
+description = "Encode and decode payloads across the common web encodings."
+entry = "plugin.py"

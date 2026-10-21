@@ -1,0 +1,5 @@
+name = "headers"
+label = "Headers"
+version = "0.1.0"
+description = "Extra checks around response headers."
+entry = "plugin.py"

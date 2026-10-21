@@ -1,0 +1,54 @@
+{
+  "name": "intercept-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop shell for the Intercept web application security proxy",
+  "main": "dist/electron/main/index.js",
+  "scripts": {
+    "dev": "concurrently -k -n vite,electron -c cyan,magenta \"vite\" \"npm:dev:electron\"",
+    "dev:electron": "npm run build:electron && wait-on tcp:5173 && cross-env INTERCEPT_DEV_SERVER=http://localhost:5173 electron .",
+    "build": "npm run build:renderer && npm run build:electron",
+    "build:daemon": "bash ../../scripts/build_daemon.sh",
+    "build:renderer": "vite build",
+    "build:electron": "esbuild electron/main/index.ts electron/preload/index.ts --bundle --platform=node --target=node20 --external:electron --format=cjs --outdir=dist/electron",
+    "typecheck": "tsc -p renderer/tsconfig.json --noEmit",
+    "package": "npm run build:daemon && npm run build && electron-builder --dir",
+    "dist": "npm run build:daemon && npm run build && electron-builder"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/ws": "^8.5.13",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.0",
+    "cross-env": "^10.0.0",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^5.9.0",
+    "vite": "^8.3.5",
+    "wait-on": "^9.5.1",
+    "ws": "^8.18.0",
+    "zustand": "^5.0.15"
+  },
+  "build": {
+    "appId": "dev.intercept.app",
+    "productName": "Intercept",
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../../dist/intercept",
+        "to": "daemon",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
+  }
+}
