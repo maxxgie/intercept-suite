@@ -31,6 +31,8 @@ browser  ──HTTP(S)/2──▶  proxy engine  ──HTTP(S)/2──▶  origi
 | Hex view of a body, and a body that is not text keeps its bytes | Working |
 | Fuzzer (Intruder): mark positions, send payloads, diff the answers | Working |
 | Scanner: active and passive checks, findings with severities | Working |
+| Scanner: crawls the target and probes the places that take input | Working |
+| Scanner: injection, auth, token, GraphQL and web hardening checks | Working |
 | Site map built from observed traffic, with scope rules | Working |
 | Spider: crawl in-scope links | Working |
 | Interactive interception: hold a request and decide what happens | Working |
@@ -183,6 +185,20 @@ command palette (`Ctrl K`).
   appear in the answer.
 * **Scanner** runs checks against a target. Active checks send their own
   requests, passive checks read the traffic that was already observed.
+  A scan first crawls the target to find the pages, the forms and the
+  parameters that take input, and then runs the checks against them. The
+  checks cover SQL injection, cross site scripting, XML external entities,
+  server side request forgery, server side template injection, OS command
+  injection, LDAP and NoSQL injection, path traversal, local and remote file
+  inclusion, open redirects, prototype pollution, unsafe deserialization,
+  GraphQL (open introspection, batching, field suggestions), authentication
+  and user enumeration, JWT (alg=none, weak secrets, tokens that never
+  expire, secrets in the claims), OAuth (an open redirect in the redirect URI,
+  a missing state, a missing PKCE), IDOR, clickjacking, weak content security
+  policies, cookie weaknesses, cache poisoning, HTTP request smuggling,
+  prototype and header misconfigurations, file upload flaws, XML issues and
+  DOM based XSS. Every finding carries a severity, the evidence that was seen
+  and the way to fix it.
 * **Findings** collects everything the scanner reported, filterable by severity.
 
 **Work**

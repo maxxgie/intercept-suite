@@ -26,6 +26,7 @@ from intercept.proxy.intercept import InterceptDecision
 from intercept.proxy.rules import Rule
 from intercept.proxy.upstream import UpstreamError
 from intercept.proxy.websocket import WebSocketFrame
+from intercept.scanner.engine import ScanOptions
 from intercept.store.sitemap import ScopeRule
 from intercept.tools.fuzzer import ATTACK_TYPES
 from intercept.tools.generators import (
@@ -210,6 +211,14 @@ class ScanJobPayload(BaseModel):
     targets: list[str] = Field(default_factory=list)
     checks: list[str] = Field(default_factory=list)
     start: bool = True
+    #: Look for the endpoints under the target before the checks are run.
+    crawl: bool = True
+    #: How many pages the crawl may read.
+    max_pages: int = 20
+    #: How deep the crawl may go.
+    max_depth: int = 2
+    #: How many endpoints are probed.
+    max_endpoints: int = 20
 
 
 class CommandRun(BaseModel):
@@ -1317,7 +1326,16 @@ def create_api(app: InterceptApp) -> FastAPI:
         targets = [t.strip() for t in payload.targets if t.strip()]
         if not targets:
             raise HTTPException(status_code=400, detail="at least one target is required")
-        job = app.scanner.create_job(targets, payload.checks or None)
+        job = app.scanner.create_job(
+            targets,
+            payload.checks or None,
+            ScanOptions(
+                crawl=payload.crawl,
+                max_pages=max(1, min(payload.max_pages, 100)),
+                max_depth=max(0, min(payload.max_depth, 5)),
+                max_endpoints=max(1, min(payload.max_endpoints, 100)),
+            ),
+        )
         if payload.start:
             await app.scanner.start(job.id)
             job = app.scanner.get(job.id) or job

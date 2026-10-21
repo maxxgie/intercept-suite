@@ -1522,6 +1522,19 @@ textarea:focus {
   border-top: 1px solid var(--border);
 }
 
+.scanner-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.scanner-summary .sev {
+  cursor: pointer;
+  background: transparent;
+}
+
 .scanner-main {
   display: flex;
   flex-direction: column;

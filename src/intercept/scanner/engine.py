@@ -1,14 +1,22 @@
 """The scanner engine.
 
-A scan job takes a list of target URLs and a list of checks, runs them and
-collects the findings. Jobs run in the background and report their progress on
-the event bus, so the UI can follow a scan live.
+A scan job takes a list of target URLs and a list of checks, finds the places
+under those targets that take input, runs the checks and collects the
+findings. Jobs run in the background and report their progress on the event
+bus, so the UI can follow a scan live.
+
+The work is split in two:
+
+* a **host check** asks the server about itself and runs once per target;
+* an **endpoint check** probes a place that takes input and runs for every
+  endpoint the crawl found.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import itertools
 import time
 from dataclasses import dataclass, field
@@ -16,17 +24,35 @@ from typing import Any
 
 from intercept.core.events import EventBus
 from intercept.plugins.api import Finding
-from intercept.scanner.checks import (
-    BUILTIN_CHECKS,
-    ActiveCheck,
-    CheckInfo,
-    PassiveCheck,
-    check_catalog,
-)
+from intercept.scanner.base import ActiveCheck, PassiveCheck
+from intercept.scanner.checks import BUILTIN_CHECKS, check_catalog
+from intercept.scanner.target import Endpoint, EndpointCrawler
 from intercept.store.findings import FindingStore
 from intercept.tools.client import ToolClient
 
-__all__ = ["Scanner", "ScanJob", "ScanResult"]
+__all__ = ["Scanner", "ScanJob", "ScanResult", "ScanOptions"]
+
+
+@dataclass
+class ScanOptions:
+    """How a scan should behave."""
+
+    #: Look for the endpoints under the target before the checks are run.
+    crawl: bool = True
+    #: How many pages the crawl may read.
+    max_pages: int = 20
+    #: How deep the crawl may go.
+    max_depth: int = 2
+    #: How many endpoints are probed.
+    max_endpoints: int = 20
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "crawl": self.crawl,
+            "max_pages": self.max_pages,
+            "max_depth": self.max_depth,
+            "max_endpoints": self.max_endpoints,
+        }
 
 
 @dataclass
@@ -40,6 +66,7 @@ class ScanResult:
     findings: list[Finding] = field(default_factory=list)
     error: str = ""
     elapsed_ms: float = 0.0
+    scope: str = "host"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -50,6 +77,7 @@ class ScanResult:
             "findings": [f.to_dict() for f in self.findings],
             "error": self.error,
             "elapsed_ms": self.elapsed_ms,
+            "scope": self.scope,
         }
 
 
@@ -63,6 +91,10 @@ class ScanJob:
     status: str = "pending"  # pending | running | finished | stopped | failed
     results: list[ScanResult] = field(default_factory=list)
     findings: list[Finding] = field(default_factory=list)
+    endpoints: list[Endpoint] = field(default_factory=list)
+    options: ScanOptions = field(default_factory=ScanOptions)
+    #: How many runs the plan holds, once it is known.
+    planned: int = 0
     created_at: float = field(default_factory=time.time)
     finished_at: float = 0.0
     error: str = ""
@@ -70,6 +102,8 @@ class ScanJob:
 
     @property
     def total(self) -> int:
+        if self.planned:
+            return self.planned
         return len(self.targets) * len(self.check_ids)
 
     def to_dict(self) -> dict[str, Any]:
@@ -83,6 +117,8 @@ class ScanJob:
             "completed": len(self.results),
             "targets": list(self.targets),
             "check_ids": list(self.check_ids),
+            "options": self.options.to_dict(),
+            "endpoints": [e.to_dict() for e in self.endpoints],
             "results": [r.to_dict() for r in self.results],
             "findings": [f.to_dict() for f in self.findings],
         }
@@ -115,10 +151,10 @@ class Scanner:
     def unregister_check(self, check_id: str) -> bool:
         return self._checks.pop(check_id, None) is not None
 
-    def checks(self) -> list[CheckInfo]:
+    def checks(self) -> list[dict[str, Any]]:
         catalog = [check.info().to_dict() for check in self._checks.values()]
         catalog.sort(key=lambda item: (item["category"], item["id"]))
-        return catalog  # type: ignore[return-value]
+        return catalog
 
     def catalog(self) -> list[dict[str, Any]]:
         """Every known check, including the ones that are not registered."""
@@ -126,18 +162,23 @@ class Scanner:
         entries = [item for item in check_catalog() if item["id"] not in known]
         return [*self.checks(), *entries]
 
+    def check(self, check_id: str) -> Any | None:
+        return self._checks.get(check_id)
+
     # ------------------------------------------------------------------ jobs
 
     def create_job(
         self,
         targets: list[str],
         check_ids: list[str] | None = None,
+        options: ScanOptions | None = None,
     ) -> ScanJob:
         selected = check_ids or [c.id for c in self._checks.values()]
         job = ScanJob(
             id=f"scan-{next(self._counter)}",
             targets=list(targets),
             check_ids=list(selected),
+            options=options or ScanOptions(),
         )
         self._jobs[job.id] = job
         self.bus.emit("scan.job.created", job=job.to_dict())
@@ -191,29 +232,38 @@ class Scanner:
         concurrency = self._concurrency()
         timeout = self._timeout()
         semaphore = asyncio.Semaphore(concurrency)
-        plan = [
-            (target, check_id)
-            for target in job.targets
-            for check_id in job.check_ids
-            if isinstance(self._checks.get(check_id), ActiveCheck)
-        ]
 
         try:
-            async def worker(index: int, target: str, check_id: str) -> ScanResult | None:
+            endpoints = await self._crawl(job)
+            job.endpoints = endpoints
+            self.bus.emit(
+                "scan.endpoints", job_id=job.id, endpoints=[e.to_dict() for e in endpoints]
+            )
+
+            plan = self._plan(job, endpoints)
+            job.planned = len(plan)
+
+            async def worker(
+                index: int, target: Any, check_id: str, scope: str
+            ) -> ScanResult | None:
                 check = self._checks[check_id]
                 async with semaphore:
-                    return await self._run_check(job, check, target, timeout, index)
+                    return await self._run_check(job, check, target, timeout, index, scope)
 
-            gathered = await asyncio.gather(
-                *(worker(index, target, check_id) for index, (target, check_id) in enumerate(plan)),
-                return_exceptions=True,
-            )
-            for outcome in gathered:
-                if isinstance(outcome, BaseException) or outcome is None:
-                    continue
-                job.results.append(outcome)
-                job.findings.extend(outcome.findings)
-                self.bus.emit("scan.result", job_id=job.id, result=outcome.to_dict())
+            if plan:
+                gathered = await asyncio.gather(
+                    *(
+                        worker(index, target, check_id, scope)
+                        for index, (target, check_id, scope) in enumerate(plan)
+                    ),
+                    return_exceptions=True,
+                )
+                for outcome in gathered:
+                    if isinstance(outcome, BaseException) or outcome is None:
+                        continue
+                    job.results.append(outcome)
+                    job.findings.extend(outcome.findings)
+                    self.bus.emit("scan.result", job_id=job.id, result=outcome.to_dict())
             job.status = "finished"
         except asyncio.CancelledError:
             job.status = "stopped"
@@ -225,6 +275,46 @@ class Scanner:
         finally:
             job.finished_at = time.time()
             self.bus.emit("scan.job.finished", id=job.id, status=job.status)
+
+    async def _crawl(self, job: ScanJob) -> list[Endpoint]:
+        """The endpoints that the targets hold."""
+        options = job.options
+        found: list[Endpoint] = []
+        if not options.crawl:
+            return [Endpoint(url=target) for target in job.targets]
+        crawler = EndpointCrawler(
+            self.client, max_pages=options.max_pages, max_depth=options.max_depth
+        )
+        for target in job.targets:
+            try:
+                found.extend(await crawler.crawl(target))
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - a broken crawl must not stop the scan
+                continue
+            if len(found) >= options.max_endpoints * 2:
+                break
+        return found[: options.max_endpoints * 2]
+
+    def _plan(self, job: ScanJob, endpoints: list[Endpoint]) -> list[tuple[Any, str, str]]:
+        """The work of the scan: which check runs against what."""
+        plan: list[tuple[Any, str, str]] = []
+        for check_id in job.check_ids:
+            check = self._checks.get(check_id)
+            if check is None:
+                continue
+            if not isinstance(check, ActiveCheck):
+                # A passive check reads the traffic that was observed and has
+                # nothing to ask the server itself.
+                continue
+            scope = getattr(check, "scope", "host")
+            if scope == "host":
+                for target in job.targets:
+                    plan.append((Endpoint(url=target), check_id, "host"))
+            else:
+                for endpoint in endpoints[: job.options.max_endpoints]:
+                    plan.append((endpoint, check_id, "endpoint"))
+        return plan
 
     def _concurrency(self) -> int:
         scan = getattr(self.config, "scan", None)
@@ -238,17 +328,20 @@ class Scanner:
         self,
         job: ScanJob,
         check: ActiveCheck,
-        target: str,
+        target: Endpoint,
         timeout: float,
         index: int = 0,
+        scope: str = "host",
     ) -> ScanResult | None:
         started = time.perf_counter()
         error = ""
         findings: list[Finding] = []
         try:
-            findings = await asyncio.wait_for(check.run(self.client, target), timeout=timeout)
+            findings = await asyncio.wait_for(self._call(check, target), timeout=max(timeout, 30.0))
         except TimeoutError:
             error = "timeout"
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:  # noqa: BLE001 - one broken check must not stop the scan
             error = f"{type(exc).__name__}: {exc}"
         elapsed = (time.perf_counter() - started) * 1000
@@ -256,15 +349,44 @@ class Scanner:
             id=f"{job.id}-{index}",
             job_id=job.id,
             check_id=check.id,
-            target=target,
+            target=target.url,
             findings=findings,
             error=error,
             elapsed_ms=elapsed,
+            scope=scope,
         )
         for finding in findings:
             await self.findings.add_async(finding, source="scanner")
             self.bus.emit("scan.finding", job_id=job.id, finding=finding.to_dict())
         return result
+
+    async def _call(self, check: Any, target: Endpoint) -> list[Finding]:
+        """Run a check, whichever way it was written.
+
+        A check that was written against an older version of the scanner takes
+        a plain URL, a newer one takes the endpoint. The name of the argument
+        says which one it is.
+        """
+        run = getattr(check, "run", None)
+        if run is None:
+            return []
+        if self._takes_url(check):
+            return await run(self.client, target.url)
+        return await run(self.client, target)
+
+    def _takes_url(self, check: Any) -> bool:
+        cached = getattr(check, "_intercept_takes_url", None)
+        if cached is not None:
+            return bool(cached)
+        takes_url = False
+        try:
+            parameters = list(inspect.signature(run_of(check)).parameters.values())
+            takes_url = len(parameters) >= 2 and parameters[1].name == "url"
+        except (TypeError, ValueError):  # pragma: no cover - a check without a signature
+            takes_url = False
+        with contextlib.suppress(AttributeError):  # a check with slots
+            check._intercept_takes_url = takes_url
+        return takes_url
 
     # --------------------------------------------------------------- passive
 
@@ -279,3 +401,8 @@ class Scanner:
             except Exception:  # noqa: BLE001 - a broken check must not break the proxy
                 continue
         return findings
+
+
+def run_of(check: Any) -> Any:
+    """The method a check is run with."""
+    return check.run

@@ -325,6 +325,7 @@ export interface CheckDescriptor {
   severity: string;
   category: string;
   kind: "active" | "passive";
+  scope: "host" | "endpoint";
   enabled: boolean;
 }
 
@@ -438,6 +439,25 @@ export interface ScanResult {
   findings: Finding[];
   error: string;
   elapsed_ms: number;
+  scope: "host" | "endpoint";
+}
+
+export interface ScanEndpoint {
+  url: string;
+  method: string;
+  parameters: { name: string; value: string; location: string }[];
+  body_fields: Record<string, string>;
+  cookies: Record<string, string>;
+  content_type: string;
+  source: string;
+  depth: number;
+}
+
+export interface ScanOptions {
+  crawl: boolean;
+  max_pages: number;
+  max_depth: number;
+  max_endpoints: number;
 }
 
 export interface ScanJob {
@@ -450,6 +470,8 @@ export interface ScanJob {
   completed: number;
   targets: string[];
   check_ids: string[];
+  options: ScanOptions;
+  endpoints: ScanEndpoint[];
   results: ScanResult[];
   findings: Finding[];
 }

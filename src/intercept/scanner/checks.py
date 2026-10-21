@@ -1,26 +1,41 @@
-"""Built in scanner checks.
+"""The checks that look at the server as a whole.
 
-A check is a small, self contained probe. Two kinds exist:
-
-``ActiveCheck``
-    sends its own requests to the target;
-``PassiveCheck``
-    looks at a request and response that were already observed.
-
-Both produce :class:`~intercept.plugins.api.Finding` objects, so a plugin can
-register checks that behave exactly like the built in ones.
+These checks ask a host about itself: the headers it sets, the cookies it
+hands out, the files it should not serve and the methods it should not
+accept. They run once per target, unlike the endpoint checks in
+:mod:`intercept.scanner.injection` which probe the places that take input.
 """
 
 from __future__ import annotations
 
 import socket
 import ssl
-from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 from intercept.core.models import Request, Response
 from intercept.plugins.api import Finding
+from intercept.scanner.appsec import (
+    CachePoisoningCheck,
+    ClickjackingCheck,
+    CookiePolicyCheck,
+    CspWeaknessCheck,
+    DomXssCheck,
+    FileUploadCheck,
+    HeaderMisconfigurationCheck,
+    HttpRequestSmugglingCheck,
+    XmlIssuesCheck,
+)
+from intercept.scanner.authsec import (
+    AuthenticationCheck,
+    IdorCheck,
+    JwtCheck,
+    OAuthCheck,
+)
+from intercept.scanner.base import ActiveCheck, CheckInfo, PassiveCheck
+from intercept.scanner.graphql import GraphqlCheck
+from intercept.scanner.injection import INJECTION_CHECKS
+from intercept.scanner.target import Endpoint
 from intercept.tools.client import ToolClient
 
 __all__ = [
@@ -30,76 +45,6 @@ __all__ = [
     "BUILTIN_CHECKS",
     "check_catalog",
 ]
-
-
-@dataclass(slots=True)
-class CheckInfo:
-    """Metadata describing a check."""
-
-    id: str
-    label: str
-    description: str = ""
-    severity: str = "info"
-    category: str = "general"
-    kind: str = "active"
-    enabled: bool = True
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "label": self.label,
-            "description": self.description,
-            "severity": self.severity,
-            "category": self.category,
-            "kind": self.kind,
-            "enabled": self.enabled,
-        }
-
-
-class ActiveCheck:
-    """A check that sends its own requests to the target."""
-
-    id = ""
-    label = ""
-    description = ""
-    severity = "info"
-    category = "general"
-
-    async def run(self, client: ToolClient, url: str) -> list[Finding]:
-        raise NotImplementedError
-
-    def info(self) -> CheckInfo:
-        return CheckInfo(
-            id=self.id,
-            label=self.label,
-            description=self.description,
-            severity=self.severity,
-            category=self.category,
-            kind="active",
-        )
-
-
-class PassiveCheck:
-    """A check that inspects traffic that was already observed."""
-
-    id = ""
-    label = ""
-    description = ""
-    severity = "info"
-    category = "general"
-
-    def run(self, request: Request, response: Response) -> list[Finding]:
-        raise NotImplementedError
-
-    def info(self) -> CheckInfo:
-        return CheckInfo(
-            id=self.id,
-            label=self.label,
-            description=self.description,
-            severity=self.severity,
-            category=self.category,
-            kind="passive",
-        )
 
 
 # --------------------------------------------------------------------- active
@@ -122,7 +67,8 @@ class SecurityHeadersCheck(ActiveCheck):
         "referrer-policy": ("low", "Set a Referrer-Policy."),
     }
 
-    async def run(self, client: ToolClient, url: str) -> list[Finding]:
+    async def run(self, client: ToolClient, target: Endpoint) -> list[Finding]:
+        url = target.url
         response = await client.send(Request(method="GET", url=url))
         if response.status == 0:
             return []
@@ -157,7 +103,8 @@ class CookieFlagsCheck(ActiveCheck):
     severity = "low"
     category = "headers"
 
-    async def run(self, client: ToolClient, url: str) -> list[Finding]:
+    async def run(self, client: ToolClient, target: Endpoint) -> list[Finding]:
+        url = target.url
         response = await client.send(Request(method="GET", url=url))
         if response.status == 0:
             return []
@@ -202,7 +149,8 @@ class DangerousMethodsCheck(ActiveCheck):
 
     METHODS = ("TRACE", "PUT", "DELETE")
 
-    async def run(self, client: ToolClient, url: str) -> list[Finding]:
+    async def run(self, client: ToolClient, target: Endpoint) -> list[Finding]:
+        url = target.url
         findings: list[Finding] = []
         for method in self.METHODS:
             request = Request(method=method, url=url)
@@ -267,7 +215,8 @@ class SensitivePathsCheck(ActiveCheck):
         "/debug",
     )
 
-    async def run(self, client: ToolClient, url: str) -> list[Finding]:
+    async def run(self, client: ToolClient, target: Endpoint) -> list[Finding]:
+        url = target.url
         split = urlsplit(url)
         base = f"{split.scheme}://{split.netloc}"
         findings: list[Finding] = []
@@ -306,7 +255,8 @@ class DirectoryListingCheck(ActiveCheck):
 
     PATHS = ("/", "/uploads/", "/backup/", "/files/", "/assets/")
 
-    async def run(self, client: ToolClient, url: str) -> list[Finding]:
+    async def run(self, client: ToolClient, target: Endpoint) -> list[Finding]:
+        url = target.url
         split = urlsplit(url)
         base = f"{split.scheme}://{split.netloc}"
         findings: list[Finding] = []
@@ -343,7 +293,8 @@ class CorsMisconfigurationCheck(ActiveCheck):
     severity = "medium"
     category = "http"
 
-    async def run(self, client: ToolClient, url: str) -> list[Finding]:
+    async def run(self, client: ToolClient, target: Endpoint) -> list[Finding]:
+        url = target.url
         request = Request(method="GET", url=url)
         request.headers.set("Origin", "https://intercept.example")
         response = await client.send(request)
@@ -396,7 +347,8 @@ class ServerBannerCheck(ActiveCheck):
     severity = "info"
     category = "info"
 
-    async def run(self, client: ToolClient, url: str) -> list[Finding]:
+    async def run(self, client: ToolClient, target: Endpoint) -> list[Finding]:
+        url = target.url
         response = await client.send(Request(method="GET", url=url))
         if response.status == 0:
             return []
@@ -431,7 +383,8 @@ class TlsConfigurationCheck(ActiveCheck):
     severity = "info"
     category = "tls"
 
-    async def run(self, client: ToolClient, url: str) -> list[Finding]:
+    async def run(self, client: ToolClient, target: Endpoint) -> list[Finding]:
+        url = target.url
         split = urlsplit(url)
         if split.scheme != "https" or not split.hostname:
             return []
@@ -582,6 +535,21 @@ BUILTIN_CHECKS: list[Any] = [
     TlsConfigurationCheck(),
     VerboseErrorPageCheck(),
     FormWithoutCsrfCheck(),
+    ClickjackingCheck(),
+    CspWeaknessCheck(),
+    CookiePolicyCheck(),
+    HeaderMisconfigurationCheck(),
+    CachePoisoningCheck(),
+    HttpRequestSmugglingCheck(),
+    FileUploadCheck(),
+    XmlIssuesCheck(),
+    DomXssCheck(),
+    AuthenticationCheck(),
+    JwtCheck(),
+    OAuthCheck(),
+    IdorCheck(),
+    GraphqlCheck(),
+    *INJECTION_CHECKS,
 ]
 
 

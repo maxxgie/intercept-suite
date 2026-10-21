@@ -26,6 +26,7 @@ import type {
   RepeaterTab,
   RuleDraft,
   ScanJob,
+  ScanOptions,
   Session,
   SiteHost,
   Target,
@@ -245,7 +246,11 @@ interface Store {
   stopFuzzJob(jobId: string): Promise<void>;
   refreshScanJobs(): Promise<void>;
   refreshChecks(): Promise<void>;
-  startScanJob(targets: string[], checks: string[]): Promise<void>;
+  startScanJob(
+    targets: string[],
+    checks: string[],
+    options?: Partial<ScanOptions>,
+  ): Promise<void>;
   stopScanJob(jobId: string): Promise<void>;
   refreshFindings(): Promise<void>;
   acknowledgeFinding(id: string): Promise<void>;
@@ -866,10 +871,15 @@ export const useStore = create<Store>((set, get) => ({
     }
   },
 
-  async startScanJob(targets, checks) {
+  async startScanJob(targets, checks, options) {
     set({ busy: true });
     try {
-      const job = await api.post<ScanJob>("/api/scanner/jobs", { targets, checks, start: true });
+      const job = await api.post<ScanJob>("/api/scanner/jobs", {
+        targets,
+        checks,
+        start: true,
+        ...options,
+      });
       set({ scanJobs: [job, ...get().scanJobs], activeScanJobId: job.id });
     } catch (error) {
       set({ error: (error as Error).message });

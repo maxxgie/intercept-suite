@@ -132,8 +132,18 @@ view under `apps/desktop/renderer/src/components/`.
 
 ## Adding a scanner check
 
-Checks live in `src/intercept/scanner/checks.py`. An active check sends its
-own requests, a passive check inspects traffic that was already observed:
+Checks live in `src/intercept/scanner/`. A check that asks the server about
+itself lives in `checks.py`, one that probes a place that takes input lives in
+`injection.py`, `appsec.py`, `authsec.py` or `graphql.py`. An active check
+sends its own requests, a passive check inspects traffic that was already
+observed.
+
+An active check says where it belongs with `scope`:
+
+* `scope = "host"` runs once per target, which suits the questions about the
+  server itself (the headers it sets, the files it serves);
+* `scope = "endpoint"` runs for every endpoint the crawl found, which suits
+  the checks that need input to work with.
 
 ```python
 class MyCheck(ActiveCheck):
@@ -141,17 +151,31 @@ class MyCheck(ActiveCheck):
     label = "My check"
     severity = "medium"
     category = "custom"
+    scope = "host"
 
-    async def run(self, client: ToolClient, url: str) -> list[Finding]:
-        response = await client.send(Request(method="GET", url=url))
+    async def run(self, client: ToolClient, target: Endpoint) -> list[Finding]:
+        response = await client.send(Request(method="GET", url=target.url))
         if response.status == 0:
             return []
-        return [Finding(check_id=self.id, title="...", url=url)]
+        return [Finding(check_id=self.id, title="...", url=target.url)]
 ```
 
-Register it by adding an instance to `BUILTIN_CHECKS`. A plugin can register
-a check through `api.add_check(...)` instead; the scanner picks up every
-registered check when the daemon starts.
+An endpoint check gets an `Endpoint`, which carries the URL, the method, the
+query parameters, the form fields and the cookies of the place. Replacing one
+of them is a copy of the endpoint:
+
+```python
+probe = target.with_parameter("id", "' OR '1'='1")
+response = await client.send(probe.request())
+```
+
+The base class `InjectionCheck` in `injection.py` does that for you: it sends
+the endpoint unchanged to get a baseline, sends it again with one parameter
+replaced and calls `detect` to judge the answer.
+
+Register a check by adding an instance to `BUILTIN_CHECKS`. A plugin can
+register a check through `api.add_check(...)` instead; the scanner picks up
+every registered check when the daemon starts.
 
 ## Packaging
 

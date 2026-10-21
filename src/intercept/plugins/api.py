@@ -21,7 +21,11 @@ module that exposes ``register(api)``::
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from intercept.scanner.target import Endpoint
+    from intercept.tools.client import ToolClient
 
 __all__ = [
     "Field",
@@ -117,7 +121,7 @@ class ActiveCheck(Protocol):
     id: str
     label: str
 
-    async def check(self, context: PluginContext, url: str) -> list[Finding]: ...
+    async def run(self, client: ToolClient, target: Endpoint) -> list[Finding]: ...
 
 
 HookCallback = Any

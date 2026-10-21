@@ -98,6 +98,7 @@ plugin check behaves exactly like a built in one.
 from intercept.core.models import Request
 from intercept.plugins.api import Finding
 from intercept.scanner.checks import ActiveCheck
+from intercept.scanner.target import Endpoint
 
 
 class MissingHeadersCheck(ActiveCheck):
@@ -107,7 +108,8 @@ class MissingHeadersCheck(ActiveCheck):
     severity = "low"
     category = "headers"
 
-    async def run(self, client, url: str) -> list[Finding]:
+    async def run(self, client, target: Endpoint) -> list[Finding]:
+        url = target.url
         response = await client.send(Request(method="GET", url=url))
         if response.status == 0:
             return []
@@ -131,6 +133,11 @@ def register(api: PluginAPI) -> None:
 
 The check is registered as `my-tool.missing-headers` and shows up in the
 scanner's check list, where it can be selected for a scan.
+
+The `target` an active check is given is an `Endpoint`: the URL, the method,
+the query parameters, the form fields and the cookies of the place. A check
+with `scope = "host"` runs once per target, a check with `scope = "endpoint"`
+runs for every place that takes input.
 
 A passive check looks the same but takes a request and a response instead of a
 client:
