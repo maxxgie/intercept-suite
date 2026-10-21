@@ -22,6 +22,7 @@ import RepeaterView from "./components/RepeaterView";
 import ReportsView from "./components/ReportsView";
 import RequestBuilderView from "./components/RequestBuilderView";
 import Resizer from "./components/Resizer";
+import RulesView from "./components/RulesView";
 import ScanStatusView from "./components/ScanStatusView";
 import ScannerView from "./components/ScannerView";
 import ScopeView from "./components/ScopeView";
@@ -49,6 +50,7 @@ export default function App() {
   const refreshWebsockets = useStore((s) => s.refreshWebsockets);
   const pushDaemonEvent = useStore((s) => s.pushDaemonEvent);
   const pushHeldRequest = useStore((s) => s.pushHeldRequest);
+  const refreshHeldRequests = useStore((s) => s.refreshHeldRequests);
 
   const sidebarWidth = useStore((s) => s.sidebarWidth);
   const setSidebarWidth = useStore((s) => s.setSidebarWidth);
@@ -90,6 +92,10 @@ export default function App() {
             pendingIntercepts: s.pendingIntercepts.filter((id) => id !== data.id),
           }));
           break;
+        case "intercept.response":
+        case "intercept.frame":
+          void refreshHeldRequests();
+          break;
         case "spider.finished":
           void refreshSites();
           break;
@@ -117,7 +123,7 @@ export default function App() {
       off();
       offStatus();
     };
-  }, [pushExchange, refreshSites, refreshWebsockets, pushDaemonEvent, pushHeldRequest]);
+  }, [pushExchange, refreshSites, refreshWebsockets, pushDaemonEvent, pushHeldRequest, refreshHeldRequests]);
 
   useEffect(() => {
     if (!error) return;
@@ -184,6 +190,7 @@ export default function App() {
             {view === "activity" && <ActivityView />}
             {view === "scan-status" && <ScanStatusView />}
             {view === "intercept" && <InterceptView />}
+            {view === "rules" && <RulesView />}
             {view === "traffic" && <TrafficView />}
             {view === "websockets" && <WebSocketView />}
             {view === "sites" && <SiteMapView />}

@@ -116,7 +116,13 @@ def upstream_headers(request: Request, host: str, port: int, scheme: str) -> Hea
     if "host" not in {key.lower() for key, _ in headers}:
         headers.set("Host", netloc(host, port, scheme))
     connection = (headers.get("connection") or "").lower()
-    if "close" not in connection and request.http_version == "HTTP/1.1":
+    # A protocol upgrade has to keep the Connection header it came with,
+    # because the origin only completes the handshake when it sees it.
+    if (
+        "close" not in connection
+        and "upgrade" not in connection
+        and request.http_version == "HTTP/1.1"
+    ):
         headers.set("Connection", "keep-alive")
     return headers
 

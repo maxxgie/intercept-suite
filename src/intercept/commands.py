@@ -128,6 +128,51 @@ def register_builtin(app: InterceptApp) -> CommandRegistry:
         handler=toggle_intercept,
     )
 
+    # ---------------------------------------------------------------- rules
+
+    async def new_rule(args: dict[str, Any]) -> dict[str, Any]:
+        from intercept.proxy.rules import Rule
+
+        rule = Rule(
+            id="",
+            name=str(args.get("name", "")),
+            kind=str(args.get("kind", "intercept")),
+            host=str(args.get("host", "")),
+            path=str(args.get("path", "")),
+            method=str(args.get("method", "")),
+            phase=str(args.get("phase", "request")),
+            target=str(args.get("target", "request")),
+            place=str(args.get("place", "header")),
+            field=str(args.get("field", "")),
+            match=str(args.get("match", "")),
+            replace=str(args.get("replace", "")),
+        )
+        await app.rule_store.create(rule)
+        await app.reload_rules()
+        return rule.to_dict()
+
+    registry.register(
+        "rule.create",
+        "New proxy rule",
+        category="Rules",
+        description="Add a rule that holds, forwards or rewrites traffic",
+        keywords=["rule", "intercept", "replace", "forward"],
+        handler=new_rule,
+    )
+
+    async def list_rules(args: dict[str, Any]) -> dict[str, Any]:
+        rules = await app.rule_store.list()
+        return {"rules": [rule.to_dict() for rule in rules]}
+
+    registry.register(
+        "rule.list",
+        "List the proxy rules",
+        category="Rules",
+        description="Show every rule the proxy applies",
+        keywords=["rules", "list"],
+        handler=list_rules,
+    )
+
     # -------------------------------------------------------------- repeater
 
     async def new_repeater_tab(args: dict[str, Any]) -> dict[str, Any]:

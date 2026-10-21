@@ -11,6 +11,7 @@ import datetime as dt
 import ipaddress
 import ssl
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -232,6 +233,29 @@ class CertificateAuthority:
             context.set_alpn_protocols(list(self.alpn))
             self._contexts[hostname] = context
             return context
+
+    def sni_context(self, on_name: Callable[[str], None] | None = None) -> ssl.SSLContext:
+        """A TLS context that picks its certificate by the SNI the client sent.
+
+        A transparent listener does not know the host name before the handshake
+        starts, so the certificate has to be chosen while it is running. The
+        name the client asked for is passed to *on_name* so the caller can
+        reach the same host upstream.
+        """
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.set_alpn_protocols(list(self.alpn))
+
+        def callback(
+            ssl_object: ssl.SSLObject, server_name: str | None, _context: ssl.SSLContext
+        ) -> ssl.SSLContext | None:
+            if not server_name:
+                return None
+            if on_name is not None:
+                on_name(server_name)
+            return self.ssl_context(server_name)
+
+        context.sni_callback = callback
+        return context
 
     def export(self, destination: Path | str | None = None) -> Path:
         """Write the root CA certificate to *destination* (default ``<home>/ca.crt``)."""

@@ -8,6 +8,7 @@ makes the tool traffic show up in the same history as browser traffic.
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from intercept.crypto.ca import CertificateAuthority
 from intercept.plugins.api import PluginContext
 from intercept.plugins.manager import PluginManager
 from intercept.proxy.intercept import InterceptController
+from intercept.proxy.rules import RuleEngine
 from intercept.proxy.server import ProxyServer
 from intercept.scanner.engine import Scanner
 from intercept.store.findings import FindingStore
@@ -29,6 +31,7 @@ from intercept.store.issues import IssueStore
 from intercept.store.logger import EventLog
 from intercept.store.notes import NoteStore
 from intercept.store.project import ProjectStore
+from intercept.store.rules import RuleStore
 from intercept.store.sessions import SessionStore
 from intercept.store.sitemap import Scope, SiteMap
 from intercept.store.targets import TargetStore
@@ -64,12 +67,14 @@ class InterceptApp:
         self.targets = TargetStore(str(home / "targets.db"))
         self.task_store = TaskStore(str(home / "tasks.db"))
         self.websockets = WebSocketStore(str(home / "websockets.db"))
+        self.rule_store = RuleStore(str(home / "rules.db"))
         self.projects = ProjectStore(home)
         self.filters = FilterState()
         self.commands = CommandRegistry()
         self.sitemap = SiteMap(self.store)
         self.scope = Scope.load(home / "scope.json")
         self.intercept = InterceptController(self.bus, config.proxy.intercept_timeout)
+        self.rules = RuleEngine()
 
         self.proxy = ProxyServer(
             config=config,
@@ -78,6 +83,7 @@ class InterceptApp:
             intercept=self.intercept,
             on_exchange=self._record,
             websockets=self.websockets,
+            rules=self.rules,
         )
         self.pool = self.proxy.pool
         self.client = ToolClient(config, self.pool, self.bus, on_exchange=self._record)
@@ -106,6 +112,7 @@ class InterceptApp:
 
         self.ca.ensure_root()
         await self.store.start()
+        self.rules.set_rules(await self.rule_store.list())
         await self.proxy.start()
         self.plugins.load_all()
         for check in self.plugins.checks.values():
@@ -190,6 +197,12 @@ class InterceptApp:
 
     # ----------------------------------------------------------------- state
 
+    async def reload_rules(self) -> list[Any]:
+        """Reload the rules from the store into the engine the proxy reads."""
+        rules = await self.rule_store.list()
+        self.rules.set_rules(rules)
+        return rules
+
     def state(self) -> dict[str, Any]:
         return {
             "proxy": {
@@ -197,6 +210,17 @@ class InterceptApp:
                 "port": self.config.proxy.port,
                 "upstream_verify": self.config.proxy.upstream_verify,
                 "http2": self.config.proxy.http2,
+                "listeners": [
+                    {
+                        "name": listener.name,
+                        "host": listener.host,
+                        "port": listener.port,
+                        "mode": listener.mode,
+                        "enabled": listener.enabled,
+                    }
+                    for listener in self.config.proxy.listeners
+                ],
+                "upstream_proxy": asdict(self.config.proxy.upstream_proxy),
             },
             "ca": {
                 "subject": self.ca.subject(),

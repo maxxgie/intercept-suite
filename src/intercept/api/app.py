@@ -11,6 +11,7 @@ import asyncio
 import base64
 import logging
 import re
+import uuid
 from pathlib import Path
 from typing import Any, Literal
 
@@ -19,9 +20,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from intercept.app import InterceptApp
-from intercept.core.models import Headers, Request
-from intercept.proxy.http1 import serialize_request
+from intercept.core.models import Headers, Request, Response
+from intercept.proxy.http1 import serialize_request, serialize_response
 from intercept.proxy.intercept import InterceptDecision
+from intercept.proxy.rules import Rule
+from intercept.proxy.upstream import UpstreamError
+from intercept.proxy.websocket import WebSocketFrame
 from intercept.store.sitemap import ScopeRule
 from intercept.tools.repeater import request_from_raw
 
@@ -55,6 +59,28 @@ class RepeatRequest(BaseModel):
     headers: dict[str, list[str]] | None = None
     body: str | None = None
     body_encoding: Literal["utf-8", "base64", "hex"] = "utf-8"
+    #: Send the request over HTTP/2 when the origin offers it.
+    http2: bool = False
+
+
+class WebSocketFramePayload(BaseModel):
+    """A frame to send over a WebSocket connection."""
+
+    text: str = ""
+    encoding: Literal["utf-8", "base64", "hex"] = "utf-8"
+    opcode: Literal["text", "binary", "ping", "pong"] = "text"
+
+
+class WebSocketReceivePayload(BaseModel):
+    """How long to wait for the frames the origin sends."""
+
+    timeout: float = 5.0
+
+
+class ResendRequest(BaseModel):
+    """Which of the earlier attempts to send again."""
+
+    attempt: int = 0
 
 
 class TabPayload(BaseModel):
@@ -77,6 +103,14 @@ class TagsPayload(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class AnnotationPayload(BaseModel):
+    """Remarks attached to the request or to the response of an exchange."""
+
+    side: Literal["request", "response"] = "request"
+    tags: list[str] | None = None
+    notes: list[str] | None = None
+
+
 class InterceptToggle(BaseModel):
     enabled: bool
 
@@ -89,6 +123,38 @@ class InterceptDecisionPayload(BaseModel):
     headers: dict[str, list[str]] | None = None
     body: str | None = None
     body_encoding: Literal["utf-8", "base64", "hex"] = "utf-8"
+    #: The status of an edited response.
+    status: int | None = None
+    #: The reason phrase of an edited response.
+    reason: str | None = None
+    #: The headers of an edited response.
+    response_headers: dict[str, list[str]] | None = None
+    #: The body of an edited response.
+    response_body: str | None = None
+    response_body_encoding: Literal["utf-8", "base64", "hex"] = "utf-8"
+
+
+class FrameDecisionPayload(BaseModel):
+    action: Literal["forward", "drop"] = "forward"
+    #: The replacement payload of an edited frame.
+    text: str | None = None
+    encoding: Literal["utf-8", "base64", "hex"] = "utf-8"
+
+
+class RulePayload(BaseModel):
+    name: str = ""
+    kind: Literal["intercept", "forward", "replace"] = "intercept"
+    enabled: bool = True
+    host: str = ""
+    path: str = ""
+    method: str = ""
+    phase: Literal["request", "response", "both"] = "request"
+    target: Literal["request", "response"] = "request"
+    place: Literal["header", "header-add", "body", "url"] = "header"
+    field: str = ""
+    match: str = ""
+    replace: str = ""
+    regex: bool = True
 
 
 class ToolRun(BaseModel):
@@ -231,6 +297,38 @@ def _build_request(
     return request
 
 
+def _build_response(
+    original: Response,
+    status: int | None,
+    reason: str | None,
+    headers: dict[str, list[str]] | None,
+    body: str | None,
+    body_encoding: str,
+) -> Response:
+    """Build an edited copy of a response, keeping the fields that were not changed."""
+    edited = Response(
+        status=status if status is not None else original.status,
+        reason=reason if reason is not None else original.reason,
+        headers=original.headers.copy(),
+        body=original.body,
+        http_version=original.http_version,
+        raw=original.raw,
+        elapsed_ms=original.elapsed_ms,
+        tls=original.tls,
+    )
+    if headers:
+        edited.headers = Headers(
+            [(k, v) for k, values in headers.items() for v in values]
+        )
+    if body is not None:
+        edited.body = _decode_body(body, body_encoding)
+    # Keep the raw form in sync so the editor always shows a full response.
+    edited.raw = serialize_response(
+        edited.status, edited.reason, edited.headers, edited.body, edited.http_version
+    )
+    return edited
+
+
 # --------------------------------------------------------------------- API
 
 
@@ -287,12 +385,11 @@ def create_api(app: InterceptApp) -> FastAPI:
                 current.setdefault(section, {}).update(value)
         if patch.log_level:
             current["log_level"] = patch.log_level
-        app.config.home = current.get("home", app.config.home)
-
-        app.config.__dict__.update(
-            {key: value for key, value in current.items() if key in app.config.__dict__}
-        )
+        app.config.apply(current)
         app.config.save()
+        # A listener that was added or removed has to take effect now, and
+        # not only after the next restart of the daemon.
+        await app.proxy.sync_listeners()
         return app.config.to_dict()
 
     # ---------------------------------------------------------- traffic
@@ -342,6 +439,18 @@ def create_api(app: InterceptApp) -> FastAPI:
         if not ok:
             raise HTTPException(status_code=404, detail="exchange not found")
         return {"id": exchange_id, "tags": payload.tags}
+
+    @router.put("/traffic/{exchange_id}/annotation")
+    async def set_annotation(
+        exchange_id: str, payload: AnnotationPayload
+    ) -> dict[str, Any]:
+        side = payload.side
+        ok = await app.store.set_annotation(
+            exchange_id, side, payload.tags, payload.notes
+        )
+        if not ok:
+            raise HTTPException(status_code=404, detail="exchange not found")
+        return {"id": exchange_id, "side": side, "tags": payload.tags, "notes": payload.notes}
 
     # ----------------------------------------------------------- commands
 
@@ -875,7 +984,7 @@ def create_api(app: InterceptApp) -> FastAPI:
                 payload.raw, payload.method, payload.url, payload.headers, payload.body,
                 payload.body_encoding,
             )
-        response = await app.repeater.send(tab_id, request)
+        response = await app.repeater.send(tab_id, request, http2=payload.http2)
         if response is None:
             raise HTTPException(status_code=404, detail="tab not found")
         tab = app.repeater.get(tab_id)
@@ -883,6 +992,78 @@ def create_api(app: InterceptApp) -> FastAPI:
             "response": response.to_dict(),
             "tab": tab.to_dict() if tab else None,
         }
+
+    @router.post("/repeater/tabs/{tab_id}/resend")
+    async def resend_tab(tab_id: str, payload: ResendRequest) -> dict[str, Any]:
+        """Send one of the earlier attempts of the tab again."""
+        response = await app.repeater.resend(tab_id, payload.attempt)
+        if response is None:
+            raise HTTPException(status_code=404, detail="no such attempt")
+        tab = app.repeater.get(tab_id)
+        return {
+            "response": response.to_dict(),
+            "tab": tab.to_dict() if tab else None,
+        }
+
+    # ------------------------------------------------------ repeater sockets
+
+    @router.post("/repeater/tabs/{tab_id}/websocket/open")
+    async def open_websocket(tab_id: str) -> dict[str, Any]:
+        """Open a WebSocket connection for the tab."""
+        if app.repeater.get(tab_id) is None:
+            raise HTTPException(status_code=404, detail="tab not found")
+        try:
+            session = await app.repeater.open_websocket(tab_id)
+        except UpstreamError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return session.to_dict()
+
+    @router.get("/repeater/tabs/{tab_id}/websocket")
+    async def websocket_state(tab_id: str) -> dict[str, Any]:
+        """The frames that were sent and received over the connection."""
+        if app.repeater.get(tab_id) is None:
+            raise HTTPException(status_code=404, detail="tab not found")
+        session = app.repeater.websocket(tab_id)
+        if session is None:
+            return {"open": False, "closed": True, "sent": [], "received": []}
+        return session.to_dict()
+
+    @router.post("/repeater/tabs/{tab_id}/websocket/send")
+    async def send_websocket_frame(
+        tab_id: str, payload: WebSocketFramePayload
+    ) -> dict[str, Any]:
+        """Send a frame over the WebSocket connection of the tab."""
+        if app.repeater.get(tab_id) is None:
+            raise HTTPException(status_code=404, detail="tab not found")
+        opcodes = {"text": 0x1, "binary": 0x2, "ping": 0x9, "pong": 0xA}
+        try:
+            frame = await app.repeater.send_websocket(
+                tab_id, _decode_body(payload.text, payload.encoding), opcodes[payload.opcode]
+            )
+        except UpstreamError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return frame.to_dict()
+
+    @router.post("/repeater/tabs/{tab_id}/websocket/receive")
+    async def receive_websocket_frames(
+        tab_id: str, payload: WebSocketReceivePayload
+    ) -> dict[str, Any]:
+        """Read the frames the origin sent."""
+        if app.repeater.get(tab_id) is None:
+            raise HTTPException(status_code=404, detail="tab not found")
+        try:
+            frames = await app.repeater.receive_websocket(tab_id, payload.timeout)
+        except UpstreamError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"frames": [frame.to_dict() for frame in frames]}
+
+    @router.post("/repeater/tabs/{tab_id}/websocket/close")
+    async def close_websocket(tab_id: str) -> dict[str, Any]:
+        """Close the WebSocket connection of the tab."""
+        if app.repeater.get(tab_id) is None:
+            raise HTTPException(status_code=404, detail="tab not found")
+        await app.repeater.close_websocket(tab_id)
+        return {"closed": tab_id}
 
     # ----------------------------------------------------------- spider
 
@@ -914,6 +1095,20 @@ def create_api(app: InterceptApp) -> FastAPI:
     async def intercept_state() -> dict[str, Any]:
         return app.intercept.state()
 
+    @router.get("/intercept/{request_id}")
+    async def held_message(request_id: str) -> dict[str, Any]:
+        """The full text of a message that is being held."""
+        item = app.intercept.item(request_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="no such pending request")
+        return {
+            "id": item.id,
+            "phase": item.phase,
+            "created_at": item.created_at,
+            "request": item.request.to_dict(),
+            "response": item.response.to_dict() if item.response is not None else None,
+        }
+
     @router.post("/intercept/toggle")
     async def toggle_intercept(payload: InterceptToggle) -> dict[str, Any]:
         app.intercept.enabled = payload.enabled
@@ -922,18 +1117,84 @@ def create_api(app: InterceptApp) -> FastAPI:
 
     @router.post("/intercept/{request_id}")
     async def decide(request_id: str, payload: InterceptDecisionPayload) -> dict[str, Any]:
+        item = app.intercept.item(request_id)
         request = None
-        if payload.action == "forward" and (
+        response = None
+        if item is not None and item.phase == "response" and item.response is not None:
+            if payload.action == "forward" and (
+                payload.status is not None
+                or payload.reason is not None
+                or payload.response_headers
+                or payload.response_body is not None
+            ):
+                response = _build_response(
+                    item.response,
+                    payload.status,
+                    payload.reason,
+                    payload.response_headers,
+                    payload.response_body,
+                    payload.response_body_encoding,
+                )
+        elif payload.action == "forward" and (
             payload.raw or payload.url or payload.body is not None
         ):
             request = _build_request(
                 payload.raw, payload.method, payload.url, payload.headers, payload.body,
                 payload.body_encoding,
             )
-        decision = InterceptDecision(action=payload.action, request=request)
+        decision = InterceptDecision(
+            action=payload.action, request=request, response=response
+        )
         if not app.intercept.resolve(request_id, decision):
             raise HTTPException(status_code=404, detail="no such pending request")
         return {"resolved": request_id, "action": payload.action}
+
+    @router.post("/intercept/frames/{frame_id}")
+    async def decide_frame(frame_id: str, payload: FrameDecisionPayload) -> dict[str, Any]:
+        frame = app.intercept.frame(frame_id)
+        edited = None
+        if frame is not None and payload.action == "forward" and payload.text is not None:
+            edited = WebSocketFrame(
+                direction=frame.direction,
+                opcode=frame.opcode,
+                payload=_decode_body(payload.text, payload.encoding),
+                fin=frame.fin,
+            )
+        decision = InterceptDecision(action=payload.action, frame=edited)
+        if not app.intercept.resolve_frame(frame_id, decision):
+            raise HTTPException(status_code=404, detail="no such pending frame")
+        return {"resolved": frame_id, "action": payload.action}
+
+    # -------------------------------------------------------------- rules
+
+    @router.get("/rules")
+    async def list_rules() -> dict[str, Any]:
+        return {"rules": [rule.to_dict() for rule in await app.rule_store.list()]}
+
+    @router.post("/rules")
+    async def create_rule(payload: RulePayload) -> dict[str, Any]:
+        rule = Rule.from_dict(payload.model_dump())
+        rule.id = uuid.uuid4().hex[:12]
+        await app.rule_store.create(rule)
+        await app.reload_rules()
+        return rule.to_dict()
+
+    @router.put("/rules/{rule_id}")
+    async def update_rule(rule_id: str, payload: RulePayload) -> dict[str, Any]:
+        rule = Rule.from_dict(payload.model_dump())
+        rule.id = rule_id
+        updated = await app.rule_store.update(rule)
+        if updated is None:
+            raise HTTPException(status_code=404, detail="rule not found")
+        await app.reload_rules()
+        return updated.to_dict()
+
+    @router.delete("/rules/{rule_id}")
+    async def delete_rule(rule_id: str) -> dict[str, Any]:
+        if not await app.rule_store.delete(rule_id):
+            raise HTTPException(status_code=404, detail="rule not found")
+        await app.reload_rules()
+        return {"deleted": rule_id}
 
     # ------------------------------------------------------------- fuzzer
 

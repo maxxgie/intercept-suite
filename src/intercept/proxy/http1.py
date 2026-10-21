@@ -207,7 +207,10 @@ async def read_message(
             warnings.append("conflicting Content-Length values")
 
     connection = (headers.get("connection") or "").lower()
-    upgrade = "upgrade" in connection and "upgrade" in (headers.get("upgrade") or "").lower()
+    # A protocol upgrade is asked for by the Connection header naming it and
+    # by the Upgrade header naming the protocol. The value of the Upgrade
+    # header is the protocol, not the word "upgrade".
+    upgrade = "upgrade" in connection and bool(headers.get("upgrade"))
     keep_alive = "close" not in connection
     if version == "HTTP/1.0":
         keep_alive = "keep-alive" in connection

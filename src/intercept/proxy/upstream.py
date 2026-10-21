@@ -18,10 +18,18 @@ import ssl
 import time
 from dataclasses import dataclass, field
 
-from intercept.core.models import Headers
+from intercept.core.config import UpstreamProxyConfig
+from intercept.core.models import Headers, absolute_url
 from intercept.core.protocols import ALPN_PROTOCOLS
 from intercept.proxy.h2 import H2ClientConnection, H2Response
-from intercept.proxy.http1 import WireMessage, read_message, serialize_request
+from intercept.proxy.http1 import (
+    WireMessage,
+    parse_head_block,
+    read_head_block,
+    read_message,
+    serialize_request,
+)
+from intercept.proxy.socks import SocksError, open_socks5
 from intercept.proxy.stream import BufferedStream
 
 log = logging.getLogger("intercept.proxy")
@@ -31,6 +39,88 @@ __all__ = ["UpstreamPool", "UpstreamError"]
 
 class UpstreamError(Exception):
     """Raised when the origin server could not be reached."""
+
+
+async def open_origin(
+    host: str,
+    port: int,
+    scheme: str,
+    ssl_context: ssl.SSLContext | None,
+    upstream: UpstreamProxyConfig | None,
+    timeout: float,
+    max_header_size: int = 256 * 1024,
+) -> tuple[BufferedStream, asyncio.StreamWriter]:
+    """Open a connection to the origin, optionally through an upstream proxy.
+
+    The upstream proxy is either a normal forward proxy or a SOCKS5 proxy. An
+    encrypted origin is reached by opening a tunnel through the proxy first
+    and then running the TLS handshake on top of it, so the origin still sees
+    an ordinary client.
+    """
+    if upstream is None:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(
+                host,
+                port,
+                ssl=ssl_context,
+                server_hostname=host if ssl_context else None,
+            ),
+            timeout=timeout,
+        )
+        return BufferedStream(reader), writer
+
+    if upstream.scheme == "socks5":
+        reader, writer = await open_socks5(
+            upstream.host,
+            upstream.port,
+            host,
+            port,
+            upstream.username,
+            upstream.password,
+            timeout,
+        )
+    else:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(upstream.host, upstream.port), timeout=timeout
+        )
+
+    stream = BufferedStream(reader)
+    if scheme == "https" and ssl_context is not None:
+        if upstream.scheme != "socks5":
+            # A SOCKS tunnel already reaches the destination; a forward proxy
+            # needs the tunnel opened first.
+            await _connect_tunnel(stream, writer, host, port, max_header_size, timeout)
+        await writer.start_tls(ssl_context, server_hostname=host)
+    return stream, writer
+
+
+async def _connect_tunnel(
+    stream: BufferedStream,
+    writer: asyncio.StreamWriter,
+    host: str,
+    port: int,
+    max_header_size: int,
+    timeout: float,
+) -> None:
+    """Open a CONNECT tunnel through a forward proxy."""
+    authority = f"{host}:{port}"
+    writer.write(
+        f"CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n".encode("latin-1")
+    )
+    await writer.drain()
+    block = await asyncio.wait_for(
+        read_head_block(stream, max_header_size), timeout=timeout
+    )
+    if block is None:
+        raise UpstreamError("the upstream proxy closed the connection")
+    start_line, _, _ = parse_head_block(block)
+    parts = start_line.split(" ")
+    try:
+        status = int(parts[1])
+    except (IndexError, ValueError):
+        status = 0
+    if status != 200:
+        raise UpstreamError(f"the upstream proxy refused the tunnel: {start_line}")
 
 
 @dataclass
@@ -44,6 +134,8 @@ class UpstreamPool:
     max_body_size: int = 32 * 1024 * 1024
     #: Try HTTP/2 with the origin when it advertises support.
     http2: bool = True
+    #: The proxy the origin traffic is chained through, if any.
+    upstream_proxy: UpstreamProxyConfig | None = None
     _connections: dict[tuple[str, str, int], _Connection] = field(default_factory=dict)
     _h2_connections: dict[tuple[str, str, int], _H2Connection] = field(default_factory=dict)
     _h2_unsupported: set[tuple[str, str, int]] = field(default_factory=set)
@@ -62,6 +154,23 @@ class UpstreamPool:
             context.set_alpn_protocols(list(alpn))
         return context
 
+    def _chain(self) -> UpstreamProxyConfig | None:
+        """The upstream proxy to chain through, if one is configured."""
+        proxy = self.upstream_proxy
+        if proxy is not None and proxy.enabled and proxy.host and proxy.port:
+            return proxy
+        return None
+
+    def _wire_target(self, scheme: str, host: str, port: int, target: str) -> str:
+        """The request target as it goes on the wire.
+
+        A forward proxy upstream expects the absolute form, a direct
+        connection expects the origin form.
+        """
+        chain = self._chain()
+        if chain is not None and chain.scheme != "socks5":
+            return absolute_url(scheme, host, port, target)
+        return target
 
     async def send(
         self,
@@ -82,7 +191,7 @@ class UpstreamPool:
         try:
             message = await connection.request(
                 method=method,
-                target=target,
+                target=self._wire_target(scheme, host, port, target),
                 headers=headers,
                 body=body,
                 http_version=http_version,
@@ -119,6 +228,7 @@ class UpstreamPool:
                     timeout=self.timeout,
                     max_header_size=self.max_header_size,
                     max_body_size=self.max_body_size,
+                    upstream=self._chain(),
                 )
                 await connection.connect()
                 self._connections[key] = connection
@@ -126,21 +236,24 @@ class UpstreamPool:
 
     async def open_raw(
         self, scheme: str, host: str, port: int
-    ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+    ) -> tuple[BufferedStream, asyncio.StreamWriter]:
         """Open a dedicated connection for protocol upgrades (WebSocket, h2c)."""
         context = self._ssl_context(["http/1.1"]) if scheme == "https" else None
         try:
-            return await asyncio.wait_for(
-                asyncio.open_connection(
-                    host,
-                    port,
-                    ssl=context,
-                    server_hostname=host if context else None,
-                ),
-                timeout=self.timeout,
+            stream, writer = await open_origin(
+                host,
+                port,
+                scheme,
+                context,
+                self._chain(),
+                self.timeout,
+                self.max_header_size,
             )
+        except (SocksError, UpstreamError) as exc:
+            raise UpstreamError(str(exc)) from exc
         except (TimeoutError, OSError) as exc:
             raise UpstreamError(f"cannot connect to {host}:{port}: {exc}") from exc
+        return stream, writer
 
     async def send_h2(
         self,
@@ -178,6 +291,7 @@ class UpstreamPool:
                 port=port,
                 ssl_context=self._ssl_context(ALPN_PROTOCOLS),
                 timeout=self.timeout,
+                upstream=self._chain(),
             )
             try:
                 negotiated = await connection.connect()
@@ -233,6 +347,7 @@ class _Connection:
         timeout: float,
         max_header_size: int,
         max_body_size: int,
+        upstream: UpstreamProxyConfig | None = None,
     ) -> None:
         self.scheme = scheme
         self.host = host
@@ -241,6 +356,7 @@ class _Connection:
         self.timeout = timeout
         self.max_header_size = max_header_size
         self.max_body_size = max_body_size
+        self.upstream = upstream
         self._reader: BufferedStream | None = None
         self._writer: asyncio.StreamWriter | None = None
         # A pooled connection carries one request at a time. Tools may send
@@ -254,17 +370,19 @@ class _Connection:
 
     async def connect(self) -> None:
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(
-                    self.host,
-                    self.port,
-                    ssl=self.ssl_context,
-                    server_hostname=self.host if self.ssl_context else None,
-                ),
-                timeout=self.timeout,
+            stream, writer = await open_origin(
+                self.host,
+                self.port,
+                self.scheme,
+                self.ssl_context,
+                self.upstream,
+                self.timeout,
+                self.max_header_size,
             )
-            self._reader = BufferedStream(reader)
+            self._reader = stream
             self._writer = writer
+        except (SocksError, UpstreamError) as exc:
+            raise UpstreamError(str(exc)) from exc
         except (TimeoutError, OSError) as exc:
             raise UpstreamError(f"cannot connect to {self.host}:{self.port}: {exc}") from exc
 
@@ -320,12 +438,14 @@ class _H2Connection:
         port: int,
         ssl_context: ssl.SSLContext | None,
         timeout: float,
+        upstream: UpstreamProxyConfig | None = None,
     ) -> None:
         self.scheme = scheme
         self.host = host
         self.port = port
         self.ssl_context = ssl_context
         self.timeout = timeout
+        self.upstream = upstream
         self._conn = H2ClientConnection()
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
@@ -340,15 +460,16 @@ class _H2Connection:
     async def connect(self) -> bool:
         """Open the connection. Returns ``False`` if the origin refused ``h2``."""
         try:
-            reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(
-                    self.host,
-                    self.port,
-                    ssl=self.ssl_context,
-                    server_hostname=self.host if self.ssl_context else None,
-                ),
-                timeout=self.timeout,
+            stream, writer = await open_origin(
+                self.host,
+                self.port,
+                self.scheme,
+                self.ssl_context,
+                self.upstream,
+                self.timeout,
             )
+        except (SocksError, UpstreamError) as exc:
+            raise UpstreamError(str(exc)) from exc
         except (TimeoutError, OSError) as exc:
             raise UpstreamError(f"cannot connect to {self.host}:{self.port}: {exc}") from exc
 
@@ -360,7 +481,7 @@ class _H2Connection:
                 await writer.wait_closed()
             return False
 
-        self._reader = reader
+        self._reader = stream.reader
         self._writer = writer
         self._writer.write(self._conn.data_to_send())
         await self._writer.drain()

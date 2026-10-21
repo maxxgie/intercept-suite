@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { useStore } from "../state/store";
 import type { RepeaterTab, ResponseDetail } from "../types";
+import { bodyBytes } from "../lib/bytes";
 
 interface BrowserHistory {
   url: string;
@@ -10,6 +11,17 @@ interface BrowserHistory {
   mime: string;
   size: number;
   at: number;
+}
+
+/** The body of a response as text, or a note that it is binary. */
+function bodyText(response: ResponseDetail): string {
+  if (response.body_encoding !== "base64") return response.body;
+  const bytes = bodyBytes(response.body, "base64");
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return `(${bytes.length} binary bytes)`;
+  }
 }
 
 /**
@@ -145,7 +157,9 @@ export default function BrowserView() {
             <div className="browser-meta muted small">
               {response.mime_type} · {response.body_length} bytes · {response.http_version}
             </div>
-            <pre className="report-preview mono">{response.body || "(empty body)"}</pre>
+            <pre className="report-preview mono">
+              {bodyText(response) || "(empty body)"}
+            </pre>
           </div>
         ) : (
           <div className="placeholder">The response will show up here.</div>

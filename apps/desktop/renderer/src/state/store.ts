@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api, setApiBase } from "../lib/api";
 import type {
+  AppConfig,
   CheckDescriptor,
   CommandDescriptor,
   DashboardData,
@@ -9,13 +10,18 @@ import type {
   ExchangeSummary,
   Finding,
   FuzzJob,
+  HeldFrame,
+  HeldItem,
+  InterceptState,
   Issue,
   LogEntry,
   Note,
   OrganizerHost,
   PluginInfo,
   Project,
+  ProxyRule,
   RepeaterTab,
+  RuleDraft,
   ScanJob,
   Session,
   SiteHost,
@@ -24,6 +30,7 @@ import type {
   ToolDescriptor,
   WebSocketConnection,
   WebSocketMessage,
+  WebSocketSession,
 } from "../types";
 
 export type View =
@@ -33,6 +40,7 @@ export type View =
   | "traffic"
   | "websockets"
   | "intercept"
+  | "rules"
   | "repeater"
   | "fuzzer"
   | "builder"
@@ -56,7 +64,7 @@ export type View =
   | "projects"
   | "extensions"
   | "settings";
-export type MessageTab = "pretty" | "headers" | "body" | "raw";
+export type MessageTab = "pretty" | "headers" | "body" | "hex" | "render" | "raw";
 export type BottomTab = "logs" | "events" | "alerts" | "status";
 
 export interface ScopeRule {
@@ -95,6 +103,8 @@ interface Store {
   detail: ExchangeDetail | null;
   tabs: RepeaterTab[];
   activeTabId: string | null;
+  repeaterHttp2: boolean;
+  websocketSession: WebSocketSession | null;
   sites: SiteHost[];
   tools: ToolDescriptor[];
   plugins: PluginInfo[];
@@ -138,7 +148,13 @@ interface Store {
   /* scope and interception */
   scopeRules: ScopeRule[];
   heldRequests: HeldRequest[];
+  heldItems: HeldItem[];
+  heldFrames: HeldFrame[];
   daemonEvents: DaemonEventEntry[];
+  /* rules */
+  rules: ProxyRule[];
+  /* configuration */
+  config: AppConfig | null;
 
   bootstrap(): Promise<void>;
   setView(view: View): void;
@@ -155,6 +171,23 @@ interface Store {
   refreshHeldRequests(): Promise<void>;
   pushHeldRequest(request: HeldRequest): void;
   decideHeldRequest(id: string, action: "forward" | "drop"): Promise<void>;
+  decideHeldRequestWith(
+    id: string,
+    payload: Record<string, unknown>,
+  ): Promise<void>;
+  decideHeldFrame(id: string, action: "forward" | "drop", text?: string): Promise<void>;
+  annotate(
+    exchangeId: string,
+    side: "request" | "response",
+    tags: string[],
+    notes: string[],
+  ): Promise<void>;
+  refreshRules(): Promise<void>;
+  createRule(rule: RuleDraft): Promise<void>;
+  updateRule(id: string, rule: RuleDraft): Promise<void>;
+  deleteRule(id: string): Promise<void>;
+  refreshConfig(): Promise<void>;
+  saveConfig(patch: Record<string, unknown>): Promise<void>;
   pushDaemonEvent(type: string, data: Record<string, unknown>): void;
   clearDaemonEvents(): void;
   createRepeaterTab(payload: {
@@ -164,6 +197,8 @@ interface Store {
     body?: string;
     name?: string;
   }): Promise<RepeaterTab>;
+  refreshTabs(): Promise<void>;
+  setRepeaterHttp2(enabled: boolean): void;
   refreshTraffic(): Promise<void>;
   select(id: string | null): Promise<void>;
   clearTraffic(): Promise<void>;
@@ -175,7 +210,12 @@ interface Store {
   addTab(tab: RepeaterTab): void;
   updateTab(tabId: string, raw: string): void;
   sendTab(tabId: string, raw?: string): Promise<void>;
+  resendTab(tabId: string, attempt: number): Promise<void>;
   closeTab(tabId: string): Promise<void>;
+  openWebSocket(tabId: string): Promise<void>;
+  sendWebSocketFrame(tabId: string, text: string, opcode: string): Promise<void>;
+  receiveWebSocketFrames(tabId: string, timeout: number): Promise<void>;
+  closeWebSocket(tabId: string): Promise<void>;
   runTool(toolId: string, values: Record<string, unknown>): Promise<string>;
   pushExchange(exchange: ExchangeSummary): void;
   setError(message: string | null): void;
@@ -276,6 +316,8 @@ export const useStore = create<Store>((set, get) => ({
   detail: null,
   tabs: [],
   activeTabId: null,
+  repeaterHttp2: false,
+  websocketSession: null,
   sites: [],
   tools: [],
   plugins: [],
@@ -316,7 +358,11 @@ export const useStore = create<Store>((set, get) => ({
   bottomTab: "logs",
   scopeRules: [],
   heldRequests: [],
+  heldItems: [],
+  heldFrames: [],
   daemonEvents: [],
+  rules: [],
+  config: null,
 
   async bootstrap() {
     try {
@@ -366,6 +412,11 @@ export const useStore = create<Store>((set, get) => ({
     if (view === "organizer") void get().refreshOrganizer();
     if (view === "scope") void get().refreshScope();
     if (view === "intercept") void get().refreshHeldRequests();
+    if (view === "rules") void get().refreshRules();
+    if (view === "settings") {
+      void get().refreshConfig();
+      void get().refreshPlugins();
+    }
   },
 
   closeTool(view) {
@@ -419,16 +470,21 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   async removeScopeRule(pattern) {
-    await api.delete(`/api/scope/rules/${encodeURIComponent(pattern)}`);
+    await api.delete(`/api/scope/rules?pattern=${encodeURIComponent(pattern)}`);
     await get().refreshScope();
   },
 
   async refreshHeldRequests() {
     try {
-      const response = await api.get<{ pending: string[] }>("/api/intercept");
+      const response = await api.get<InterceptState>("/api/intercept");
       const pending = response.pending ?? [];
       const held = get().heldRequests.filter((item) => pending.includes(item.id));
-      set({ heldRequests: held, interceptEnabled: response.enabled === true });
+      set({
+        heldRequests: held,
+        heldItems: response.items ?? [],
+        heldFrames: response.frames ?? [],
+        interceptEnabled: response.enabled === true,
+      });
     } catch (error) {
       set({ error: (error as Error).message });
     }
@@ -442,6 +498,68 @@ export const useStore = create<Store>((set, get) => ({
   async decideHeldRequest(id, action) {
     await api.post(`/api/intercept/${id}`, { action });
     set({ heldRequests: get().heldRequests.filter((item) => item.id !== id) });
+    await get().refreshHeldRequests();
+  },
+
+  async decideHeldRequestWith(id, payload) {
+    await api.post(`/api/intercept/${id}`, payload);
+    set({ heldRequests: get().heldRequests.filter((item) => item.id !== id) });
+    await get().refreshHeldRequests();
+  },
+
+  async decideHeldFrame(id, action, text) {
+    const payload: Record<string, unknown> = { action };
+    if (text !== undefined) payload.text = text;
+    await api.post(`/api/intercept/frames/${id}`, payload);
+    set({ heldFrames: get().heldFrames.filter((frame) => frame.id !== id) });
+    await get().refreshHeldRequests();
+  },
+
+  async annotate(exchangeId, side, tags, notes) {
+    await api.put(`/api/traffic/${exchangeId}/annotation`, { side, tags, notes });
+    await get().select(exchangeId);
+  },
+
+  async refreshRules() {
+    try {
+      const response = await api.get<{ rules: ProxyRule[] }>("/api/rules");
+      set({ rules: response.rules ?? [] });
+    } catch (error) {
+      set({ error: (error as Error).message });
+    }
+  },
+
+  async createRule(rule) {
+    await api.post("/api/rules", rule);
+    await get().refreshRules();
+  },
+
+  async updateRule(id, rule) {
+    await api.put(`/api/rules/${id}`, rule);
+    await get().refreshRules();
+  },
+
+  async deleteRule(id) {
+    await api.delete(`/api/rules/${id}`);
+    await get().refreshRules();
+  },
+
+  async refreshConfig() {
+    try {
+      const config = await api.get<AppConfig>("/api/config");
+      set({ config });
+    } catch (error) {
+      set({ error: (error as Error).message });
+    }
+  },
+
+  async saveConfig(patch) {
+    try {
+      const config = await api.put<AppConfig>("/api/config", patch);
+      set({ config });
+    } catch (error) {
+      set({ error: (error as Error).message });
+    }
   },
 
   pushDaemonEvent(type, data) {
@@ -561,7 +679,7 @@ export const useStore = create<Store>((set, get) => ({
     try {
       const response = await api.post<{ response: RepeaterTab["response"]; tab: RepeaterTab }>(
         `/api/repeater/tabs/${tabId}/send`,
-        { tab_id: tabId, raw },
+        { tab_id: tabId, raw, http2: get().repeaterHttp2 },
       );
       set({
         tabs: get().tabs.map((tab) => (tab.id === tabId ? response.tab : tab)),
@@ -571,6 +689,84 @@ export const useStore = create<Store>((set, get) => ({
       set({ error: (error as Error).message });
     } finally {
       set({ busy: false });
+    }
+  },
+
+  async resendTab(tabId, attempt) {
+    set({ busy: true });
+    try {
+      const response = await api.post<{ response: RepeaterTab["response"]; tab: RepeaterTab }>(
+        `/api/repeater/tabs/${tabId}/resend`,
+        { attempt },
+      );
+      set({
+        tabs: get().tabs.map((tab) => (tab.id === tabId ? response.tab : tab)),
+        activeTabId: tabId,
+      });
+    } catch (error) {
+      set({ error: (error as Error).message });
+    } finally {
+      set({ busy: false });
+    }
+  },
+
+  async refreshTabs() {
+    try {
+      const response = await api.get<{ tabs: RepeaterTab[] }>("/api/repeater/tabs");
+      set({ tabs: response.tabs });
+    } catch (error) {
+      set({ error: (error as Error).message });
+    }
+  },
+
+  setRepeaterHttp2(enabled) {
+    set({ repeaterHttp2: enabled });
+  },
+
+  async openWebSocket(tabId) {
+    set({ busy: true });
+    try {
+      const session = await api.post<WebSocketSession>(
+        `/api/repeater/tabs/${tabId}/websocket/open`,
+        {},
+      );
+      set({ websocketSession: session });
+    } catch (error) {
+      set({ error: (error as Error).message });
+    } finally {
+      set({ busy: false });
+    }
+  },
+
+  async sendWebSocketFrame(tabId, text, opcode) {
+    try {
+      await api.post(`/api/repeater/tabs/${tabId}/websocket/send`, { text, opcode });
+      const session = await api.get<WebSocketSession>(`/api/repeater/tabs/${tabId}/websocket`);
+      set({ websocketSession: session });
+    } catch (error) {
+      set({ error: (error as Error).message });
+    }
+  },
+
+  async receiveWebSocketFrames(tabId, timeout) {
+    set({ busy: true });
+    try {
+      await api.post(`/api/repeater/tabs/${tabId}/websocket/receive`, { timeout });
+      const session = await api.get<WebSocketSession>(`/api/repeater/tabs/${tabId}/websocket`);
+      set({ websocketSession: session });
+    } catch (error) {
+      set({ error: (error as Error).message });
+    } finally {
+      set({ busy: false });
+    }
+  },
+
+  async closeWebSocket(tabId) {
+    try {
+      await api.post(`/api/repeater/tabs/${tabId}/websocket/close`, {});
+      set({ websocketSession: null });
+    } catch (error) {
+      set({ error: (error as Error).message });
     }
   },
 

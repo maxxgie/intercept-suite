@@ -26,12 +26,21 @@ browser  ──HTTP(S)/2──▶  proxy engine  ──HTTP(S)/2──▶  origi
 | Traffic history with byte-level raw requests and responses | Working |
 | Live traffic view with pretty/headers/body/raw inspectors | Working |
 | Repeater: edit a request, resend it, keep every attempt | Working |
+| Repeater: compare two attempts and read how long each of them took | Working |
+| Repeater: send over HTTP/2 and hold a WebSocket connection | Working |
+| Hex view of a body, and a body that is not text keeps its bytes | Working |
 | Fuzzer (Intruder): mark positions, send payloads, diff the answers | Working |
 | Scanner: active and passive checks, findings with severities | Working |
 | Site map built from observed traffic, with scope rules | Working |
 | Spider: crawl in-scope links | Working |
 | Interactive interception: hold a request and decide what happens | Working |
+| Interception of the response, with the status, headers and body edited | Working |
+| Rules: intercept, auto-forward and match and replace, with globs | Working |
 | WebSocket history: connections and every frame, in both directions | Working |
+| WebSocket frame interception, with the payload edited or the frame dropped | Working |
+| Listeners: an HTTP proxy, a SOCKS5 proxy and a Linux transparent proxy | Working |
+| Chaining the traffic through an HTTP or a SOCKS5 upstream proxy | Working |
+| Tags and notes on the request and on the response of an exchange | Working |
 | Filter language over the whole workspace, with a command palette | Working |
 | Notes, issues, targets, sessions, tasks and project files | Working |
 | Report generator: Markdown, HTML and JSON | Working |
@@ -187,6 +196,55 @@ command palette (`Ctrl K`).
 Turn on **Intercept** in the command bar to hold every request. The daemon will
 not forward a held request until it is answered through the API, which is what
 makes request smuggling and cache poisoning analysis possible.
+
+### The repeater
+
+**Repeater** holds the requests you want to try again. Every tab keeps its own
+request, its latest answer and the whole list of attempts, so a change can be
+tried and compared with what came before.
+
+* The request is edited as raw HTTP, and the answer is shown as pretty text,
+  headers, body, a hex dump or the raw message.
+* **HTTP/2** sends the request over HTTP/2 when the origin offers it through
+  ALPN, and over HTTP/1.1 when it does not.
+* **Attempts** lists every send with the time it took, draws the time as a bar
+  against the slowest one, and marks the lines that differ between two
+  attempts. An earlier attempt can be sent again from there.
+* A request that asks for a WebSocket upgrade opens a connection of its own.
+  The frames that are sent and the frames that come back are shown side by
+  side, with the payload as text or as a hex dump.
+
+A body that is not text keeps its bytes: it travels as base64 and reaches the
+interface unchanged, so the hex view shows what was really on the wire.
+
+### Rules
+
+**Proxy Rules** decides what the intercept switch does. A rule matches on the
+host, the path and the method, and each field is a glob, so `*.example.com` and
+`/api/*` cover most of what is needed. An empty field matches everything.
+
+| Kind | What it does |
+| --- | --- |
+| Intercept | Holds the matching request, the matching response, or both |
+| Auto forward | Lets the matching request through without asking |
+| Match and replace | Rewrites a header, a body or a URL on the way past |
+
+Without a single intercept rule the switch holds everything, which is the
+behaviour the tool has always had. A replace rule may use a regular expression
+and may refer to the text it matched with `\1`.
+
+### Listeners and upstream proxies
+
+**Settings** opens extra listeners next to the main one. An HTTP listener is an
+ordinary forward proxy, a SOCKS5 listener speaks SOCKS, and the transparent
+listener is for Linux, where the traffic is redirected to it by the network and
+the original destination is recovered from the socket. A listener that is added
+or removed takes effect at once, without a restart.
+
+The same page chains the traffic through an upstream proxy, which is either an
+HTTP forward proxy or a SOCKS5 one. An encrypted origin is reached by opening a
+tunnel through the proxy first and running the TLS handshake on top of it, so
+the origin still sees an ordinary client.
 
 ### The filter
 

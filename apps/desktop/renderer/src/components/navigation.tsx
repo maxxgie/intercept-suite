@@ -2,6 +2,7 @@ import type { ComponentType, SVGProps } from "react";
 import {
   IconActivity,
   IconBrowser,
+  IconBroom,
   IconBuilder,
   IconClock,
   IconComparer,
@@ -81,6 +82,12 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "Intercept",
         icon: IconIntercept,
         hint: "Hold requests and decide what happens to them",
+      },
+      {
+        id: "rules",
+        label: "Proxy Rules",
+        icon: IconBroom,
+        hint: "What to hold, what to let through and what to rewrite",
       },
       {
         id: "traffic",

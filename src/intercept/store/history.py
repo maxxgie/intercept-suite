@@ -60,12 +60,25 @@ CREATE TABLE IF NOT EXISTS exchanges (
     error               TEXT NOT NULL DEFAULT '',
     tags                TEXT NOT NULL DEFAULT '[]',
     notes               TEXT NOT NULL DEFAULT '[]',
-    highlighted         INTEGER NOT NULL DEFAULT 0
+    highlighted         INTEGER NOT NULL DEFAULT 0,
+    request_tags        TEXT NOT NULL DEFAULT '[]',
+    request_notes       TEXT NOT NULL DEFAULT '[]',
+    response_tags       TEXT NOT NULL DEFAULT '[]',
+    response_notes      TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_exchanges_created ON exchanges(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_exchanges_host ON exchanges(host);
 CREATE INDEX IF NOT EXISTS idx_exchanges_origin ON exchanges(origin);
 """
+
+#: The columns that were added after the first release. An existing database
+#: is given them one at a time when the store is opened.
+_ADDED_COLUMNS = (
+    ("request_tags", "TEXT NOT NULL DEFAULT '[]'"),
+    ("request_notes", "TEXT NOT NULL DEFAULT '[]'"),
+    ("response_tags", "TEXT NOT NULL DEFAULT '[]'"),
+    ("response_notes", "TEXT NOT NULL DEFAULT '[]'"),
+)
 
 
 class HistoryStore:
@@ -79,12 +92,20 @@ class HistoryStore:
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=NORMAL")
         self._db.executescript(_SCHEMA)
+        self._migrate()
         self._db.commit()
         self._queue: asyncio.Queue[Exchange | _Flush | None] = asyncio.Queue(maxsize=20000)
         self._writer: asyncio.Task | None = None
         self._dropped = 0
 
     # ------------------------------------------------------------- lifecycle
+
+    def _migrate(self) -> None:
+        """Give an older database the columns that were added later."""
+        existing = {row["name"] for row in self._db.execute("PRAGMA table_info(exchanges)")}
+        for name, definition in _ADDED_COLUMNS:
+            if name not in existing:
+                self._db.execute(f"ALTER TABLE exchanges ADD COLUMN {name} {definition}")
 
     async def start(self) -> None:
         if self._writer is None:
@@ -135,13 +156,15 @@ class HistoryStore:
                 query, request_version, request_headers, request_body, request_raw,
                 request_length, request_mime, client, tls, status, reason, response_version,
                 response_headers, response_body, response_raw, response_mime,
-                response_length, error, tags, notes, highlighted
+                response_length, error, tags, notes, highlighted,
+                request_tags, request_notes, response_tags, response_notes
             ) VALUES (
                 :id, :created_at, :elapsed_ms, :origin, :method, :url, :scheme, :host, :port,
                 :path, :query, :request_version, :request_headers, :request_body, :request_raw,
                 :request_length, :request_mime, :client, :tls, :status, :reason,
                 :response_version, :response_headers, :response_body, :response_raw,
-                :response_mime, :response_length, :error, :tags, :notes, :highlighted
+                :response_mime, :response_length, :error, :tags, :notes, :highlighted,
+                :request_tags, :request_notes, :response_tags, :response_notes
             )
             """,
             rows,
@@ -321,6 +344,42 @@ class HistoryStore:
         self._db.commit()
         return cursor.rowcount > 0
 
+    async def set_annotation(
+        self,
+        exchange_id: str,
+        side: str,
+        tags: list[str] | None = None,
+        notes: list[str] | None = None,
+    ) -> bool:
+        """Attach remarks to the request or to the response of an exchange."""
+        return await asyncio.to_thread(
+            self._set_annotation_sync, exchange_id, side, tags, notes
+        )
+
+    def _set_annotation_sync(
+        self,
+        exchange_id: str,
+        side: str,
+        tags: list[str] | None,
+        notes: list[str] | None,
+    ) -> bool:
+        assignments: list[str] = []
+        params: list[Any] = []
+        if tags is not None:
+            assignments.append(f"{side}_tags = ?")
+            params.append(json.dumps(tags))
+        if notes is not None:
+            assignments.append(f"{side}_notes = ?")
+            params.append(json.dumps(notes))
+        if not assignments:
+            return False
+        params.append(exchange_id)
+        cursor = self._db.execute(
+            f"UPDATE exchanges SET {', '.join(assignments)} WHERE id = ?", params
+        )
+        self._db.commit()
+        return cursor.rowcount > 0
+
     async def distinct_hosts(self) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._distinct_hosts_sync)
 
@@ -403,6 +462,10 @@ def _to_row(exchange: Exchange) -> dict[str, Any]:
         "tags": json.dumps(exchange.tags),
         "notes": json.dumps(exchange.notes),
         "highlighted": int(exchange.highlighted),
+        "request_tags": json.dumps(request.tags),
+        "request_notes": json.dumps(request.notes),
+        "response_tags": json.dumps(response.tags if response else []),
+        "response_notes": json.dumps(response.notes if response else []),
     }
 
 
@@ -455,6 +518,8 @@ def _full_row(row: sqlite3.Row) -> dict[str, Any]:
         raw=row["request_raw"] or b"",
         tls=bool(row["tls"]),
         client=row["client"],
+        tags=_list(row["request_tags"]),
+        notes=_list(row["request_notes"]),
     )
     response = None
     if row["status"] or row["response_raw"] or row["response_body"]:
@@ -468,6 +533,8 @@ def _full_row(row: sqlite3.Row) -> dict[str, Any]:
             elapsed_ms=row["elapsed_ms"],
             tls=bool(row["tls"]),
             error=row["error"],
+            tags=_list(row["response_tags"]),
+            notes=_list(row["response_notes"]),
         )
     exchange = Exchange(
         request=request,
@@ -488,3 +555,11 @@ def _expand(headers: dict[str, list[str]]) -> list[tuple[str, str]]:
         for value in values:
             out.append((name, value))
     return out
+
+
+def _list(value: Any) -> list[str]:
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return []
+    return parsed if isinstance(parsed, list) else []

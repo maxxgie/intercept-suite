@@ -45,6 +45,8 @@ export interface ResponseDetail extends ResponseSummary {
   body_encoding: string;
   tls: boolean;
   raw: string;
+  tags: string[];
+  notes: string[];
 }
 
 export interface ExchangeSummary {
@@ -80,6 +82,22 @@ export interface ExchangeDetail {
   highlighted: boolean;
 }
 
+export interface RepeaterAttempt {
+  id: string;
+  created_at: number;
+  elapsed_ms: number;
+  request: MessageDetail;
+  response: ResponseDetail | null;
+}
+
+export interface RepeaterTiming {
+  count: number;
+  last: number;
+  fastest: number;
+  slowest: number;
+  average: number;
+}
+
 export interface RepeaterTab {
   id: string;
   name: string;
@@ -89,6 +107,29 @@ export interface RepeaterTab {
   request: MessageDetail;
   response: ResponseDetail | null;
   attempt_count: number;
+  attempts: RepeaterAttempt[];
+  timing: RepeaterTiming;
+}
+
+export interface WebSocketFrame {
+  direction: string;
+  opcode: number;
+  type: string;
+  text: string;
+  size: number;
+  timestamp: number;
+  base64: string;
+}
+
+export interface WebSocketSession {
+  open: boolean;
+  closed: boolean;
+  error: string;
+  status: number;
+  reason: string;
+  headers: HeadersMap;
+  sent: WebSocketFrame[];
+  received: WebSocketFrame[];
 }
 
 export interface SiteNode {
@@ -139,10 +180,139 @@ export interface PluginInfo {
   tools: string[];
 }
 
+export interface InterceptState {
+  enabled: boolean;
+  pending: string[];
+  pending_count: number;
+  updated_at: number;
+  items: HeldItem[];
+  frames: HeldFrame[];
+}
+
+export interface HeldItem {
+  id: string;
+  phase: "request" | "response";
+  method: string;
+  url: string;
+  host: string;
+  path: string;
+  body_length: number;
+  mime_type: string;
+  created_at: number;
+  status?: number;
+  response_length?: number;
+  response_mime_type?: string;
+}
+
+export interface HeldFrame {
+  id: string;
+  direction: "client" | "server";
+  type: string;
+  text: string;
+  size: number;
+}
+
+export interface HeldMessage {
+  id: string;
+  phase: "request" | "response";
+  created_at: number;
+  request: MessageDetail;
+  response: ResponseDetail | null;
+}
+
+/* -------------------------------------------------------------------- rules */
+
+export type RuleKind = "intercept" | "forward" | "replace";
+export type RulePhase = "request" | "response" | "both";
+export type RuleTarget = "request" | "response";
+export type RulePlace = "header" | "header-add" | "body" | "url";
+
+export interface ProxyRule {
+  id: string;
+  name: string;
+  kind: RuleKind;
+  enabled: boolean;
+  host: string;
+  path: string;
+  method: string;
+  phase: RulePhase;
+  target: RuleTarget;
+  place: RulePlace;
+  field: string;
+  match: string;
+  replace: string;
+  regex: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
+export type RuleDraft = Omit<ProxyRule, "id" | "created_at" | "updated_at">;
+
+/* ------------------------------------------------------------------ config */
+
+export interface ListenerConfig {
+  name: string;
+  host: string;
+  port: number;
+  mode: "explicit" | "transparent" | "socks";
+  enabled: boolean;
+}
+
+export interface UpstreamProxyConfig {
+  enabled: boolean;
+  scheme: "http" | "socks5";
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+}
+
+export interface ProxyConfig {
+  host: string;
+  port: number;
+  upstream_verify: boolean;
+  upstream_ca: string;
+  intercept_enabled: boolean;
+  intercept_timeout: number;
+  max_body_size: number;
+  max_header_size: number;
+  upstream_timeout: number;
+  follow_redirects: boolean;
+  user_agent: string;
+  bypass: string[];
+  http2: boolean;
+  listeners: ListenerConfig[];
+  upstream_proxy: UpstreamProxyConfig;
+  socks: { username: string; password: string };
+  intercept_websockets: boolean;
+  intercept_websocket_directions: string[];
+}
+
+export interface ApiConfig {
+  host: string;
+  port: number;
+  cors_origins: string[];
+}
+
+export interface ScanConfig {
+  concurrency: number;
+  timeout: number;
+  max_pages: number;
+  max_depth: number;
+}
+
+export interface AppConfig {
+  proxy: ProxyConfig;
+  api: ApiConfig;
+  scan: ScanConfig;
+  home: string;
+  log_level: string;
+}
+
 export interface DaemonState {
   proxy: { host: string; port: number; upstream_verify: boolean; http2: boolean };
   ca: { subject: string; fingerprint: string; path: string };
-  intercept: { enabled: boolean; pending: string[]; pending_count: number };
+  intercept: InterceptState;
   plugins: PluginInfo[];
   tools: ToolDescriptor[];
   checks: CheckDescriptor[];

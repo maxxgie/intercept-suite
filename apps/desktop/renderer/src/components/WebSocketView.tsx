@@ -4,7 +4,9 @@ import { useStore } from "../state/store";
 export default function WebSocketView() {
   const connections = useStore((s) => s.websocketConnections);
   const messages = useStore((s) => s.websocketMessages);
+  const heldFrames = useStore((s) => s.heldFrames);
   const refresh = useStore((s) => s.refreshWebsockets);
+  const setView = useStore((s) => s.setView);
   const [selected, setSelected] = useState<string | null>(null);
   const [direction, setDirection] = useState("");
 
@@ -44,6 +46,11 @@ export default function WebSocketView() {
             <option value="server">to client</option>
           </select>
           <span className="muted">{rows.length} frames</span>
+          {heldFrames.length > 0 && (
+            <button className="button primary" onClick={() => setView("intercept")}>
+              {heldFrames.length} held frame{heldFrames.length === 1 ? "" : "s"}
+            </button>
+          )}
         </div>
         <div className="table-wrap">
           <table className="traffic-table">

@@ -7,6 +7,7 @@ payload format all stay in sync.
 
 from __future__ import annotations
 
+import base64
 import time
 import uuid
 from collections.abc import Iterable, Iterator
@@ -19,12 +20,25 @@ __all__ = [
     "Request",
     "Response",
     "Exchange",
+    "decode_body",
     "new_id",
 ]
 
 
 def new_id() -> str:
     return uuid.uuid4().hex
+
+
+def decode_body(body: bytes) -> tuple[str, str]:
+    """Return a body as text and the encoding that text is in.
+
+    A body that is not valid UTF-8 is sent as base64, so the bytes that were
+    on the wire reach the interface unchanged and can be shown as a hex dump.
+    """
+    try:
+        return body.decode("utf-8"), "utf-8"
+    except UnicodeDecodeError:
+        return base64.b64encode(body).decode("ascii"), "base64"
 
 
 def _as_pairs(items: Any) -> list[tuple[str, str]]:
@@ -220,8 +234,9 @@ class Request:
     def to_dict(self, include_raw: bool = True) -> dict[str, Any]:
         data = self.summary()
         data["headers"] = self.headers.to_dict()
-        data["body"] = self.body.decode("utf-8", "replace")
-        data["body_encoding"] = "utf-8"
+        body, encoding = decode_body(self.body)
+        data["body"] = body
+        data["body_encoding"] = encoding
         data["tls"] = self.tls
         data["client"] = self.client
         data["tags"] = list(self.tags)
@@ -262,6 +277,9 @@ class Response:
     elapsed_ms: float = 0.0
     tls: bool = True
     error: str = ""
+    #: The remarks the analyst attached to this response.
+    tags: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not isinstance(self.headers, Headers):
@@ -297,9 +315,12 @@ class Response:
     def to_dict(self, include_raw: bool = True) -> dict[str, Any]:
         data = self.summary()
         data["headers"] = self.headers.to_dict()
-        data["body"] = self.body.decode("utf-8", "replace")
-        data["body_encoding"] = "utf-8"
+        body, encoding = decode_body(self.body)
+        data["body"] = body
+        data["body_encoding"] = encoding
         data["tls"] = self.tls
+        data["tags"] = list(self.tags)
+        data["notes"] = list(self.notes)
         if include_raw:
             data["raw"] = self.raw.decode("utf-8", "replace")
         return data

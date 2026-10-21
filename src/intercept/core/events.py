@@ -37,7 +37,12 @@ class EventBus:
         self._replay: deque[Event] = deque(maxlen=replay)
         self._queue_size = queue_size
 
-    def emit(self, type: str, **data: Any) -> Event:
+    def emit(self, type: str, /, **data: Any) -> Event:
+        """Publish an event.
+
+        The event type is positional only, so a payload may carry a key of
+        its own called ``type`` without colliding with it.
+        """
         event = Event(type=type, data=data)
         self._replay.append(event)
         for queue in list(self._subscribers):

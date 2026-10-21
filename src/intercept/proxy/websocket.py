@@ -8,6 +8,8 @@ highlighted.
 
 from __future__ import annotations
 
+import base64
+import os
 import time
 from dataclasses import dataclass, field
 
@@ -48,7 +50,34 @@ class WebSocketFrame:
             "text": self.text,
             "size": len(self.payload),
             "timestamp": self.timestamp,
+            "base64": base64.b64encode(self.payload).decode("ascii"),
         }
+
+    def serialize(self, mask: bool = False) -> bytes:
+        """Build the bytes for this frame.
+
+        A frame sent by a client has to be masked and one sent by a server
+        must not be, so the mask is chosen by the caller.
+        """
+        payload = self.payload
+        header = bytearray()
+        header.append((0x80 if self.fin else 0x00) | (self.opcode & 0x0F))
+        length = len(payload)
+        mask_bit = 0x80 if mask else 0x00
+        if length < 126:
+            header.append(mask_bit | length)
+        elif length < 65536:
+            header.append(mask_bit | 126)
+            header.extend(length.to_bytes(2, "big"))
+        else:
+            header.append(mask_bit | 127)
+            header.extend(length.to_bytes(8, "big"))
+        if not mask:
+            return bytes(header) + payload
+        key = os.urandom(4)
+        header.extend(key)
+        masked = bytes(byte ^ key[index % 4] for index, byte in enumerate(payload))
+        return bytes(header) + masked
 
 
 class FrameParser:
