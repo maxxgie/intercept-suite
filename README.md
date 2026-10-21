@@ -170,6 +170,17 @@ command palette (`Ctrl K`).
 * **Fuzzer** fires many payloads at one request. Mark the interesting spot with
   `§name§` in the URL, a header value or the body, list the payloads and the
   fuzzer sends one request per payload and points out the answers that differ.
+  Four attack types spread the payloads over the positions: **sniper** works on
+  one position at a time, **battering ram** sends the same payload everywhere,
+  **pitchfork** walks the positions together and **cluster bomb** tries every
+  combination. Payloads come from generators (a list, numbers, dates, brute
+  force, character substitution, a recursive grep over a folder, a wordlist file
+  or a custom template) and processing rules rewrite them before they are sent
+  (URL encoding, base64, hashing, a prefix, a suffix, a replacement or a regex
+  extraction). A **grep match** marks the answers that hold a string and a
+  **grep extract** takes a pattern out of them. The table shows the status, the
+  length, the time, the difference against the baseline and the words that only
+  appear in the answer.
 * **Scanner** runs checks against a target. Active checks send their own
   requests, passive checks read the traffic that was already observed.
 * **Findings** collects everything the scanner reported, filterable by severity.

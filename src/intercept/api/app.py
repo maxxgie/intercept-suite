@@ -27,6 +27,14 @@ from intercept.proxy.rules import Rule
 from intercept.proxy.upstream import UpstreamError
 from intercept.proxy.websocket import WebSocketFrame
 from intercept.store.sitemap import ScopeRule
+from intercept.tools.fuzzer import ATTACK_TYPES
+from intercept.tools.generators import (
+    GENERATOR_KINDS,
+    RULE_KINDS,
+    Generator,
+    ProcessingRule,
+    apply_rules,
+)
 from intercept.tools.repeater import request_from_raw
 
 log = logging.getLogger("intercept.api")
@@ -171,6 +179,31 @@ class FuzzJobPayload(BaseModel):
     payloads: list[str] = Field(default_factory=list)
     positions: str = ""
     start: bool = True
+    #: How the payloads are spread over the positions.
+    attack_type: str = "sniper"
+    #: One list of payloads per position, for a pitchfork or a cluster bomb.
+    payload_sets: list[list[str]] = Field(default_factory=list)
+    #: The rules that rewrite every payload.
+    rules: list[dict[str, Any]] = Field(default_factory=list)
+    #: A string that has to be in the answer for the result to be a hit.
+    grep_match: str = ""
+    #: A pattern whose match is taken out of the answer.
+    grep_extract: str = ""
+
+
+class GeneratorPayload(BaseModel):
+    """A description of the payloads to try."""
+
+    kind: str = "list"
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
+class GeneratePayloadsPayload(BaseModel):
+    """A generator and the rules that are applied to what it produced."""
+
+    generator: GeneratorPayload = Field(default_factory=GeneratorPayload)
+    rules: list[dict[str, Any]] = Field(default_factory=list)
+    limit: int = 500
 
 
 class ScanJobPayload(BaseModel):
@@ -1208,11 +1241,40 @@ def create_api(app: InterceptApp) -> FastAPI:
             payload.raw, payload.method, payload.url, payload.headers, payload.body,
             payload.body_encoding,
         )
-        job = app.fuzzer.create_job(request, payload.payloads, payload.positions)
+        job = app.fuzzer.create_job(
+            request,
+            payload.payloads,
+            payload.positions,
+            attack_type=payload.attack_type,
+            payload_sets=payload.payload_sets,
+            rules=[ProcessingRule(**rule) for rule in payload.rules],
+            grep_match=payload.grep_match,
+            grep_extract=payload.grep_extract,
+        )
         if payload.start:
             await app.fuzzer.start(job.id)
             job = app.fuzzer.get(job.id) or job
         return job.to_dict()
+
+    @router.post("/fuzz/payloads")
+    async def generate_payloads(payload: GeneratePayloadsPayload) -> dict[str, Any]:
+        """The payloads a generator describes, with the rules applied."""
+        generator = Generator(kind=payload.generator.kind, options=payload.generator.options)
+        rules = [ProcessingRule(**rule) for rule in payload.rules]
+        payloads = apply_rules(generator.generate(), rules)
+        return {
+            "payloads": payloads[: max(0, payload.limit)],
+            "count": len(payloads),
+        }
+
+    @router.get("/fuzz/generators")
+    async def list_generators() -> dict[str, Any]:
+        """The generators and the rules the Intruder knows."""
+        return {
+            "generators": list(GENERATOR_KINDS),
+            "rules": list(RULE_KINDS),
+            "attack_types": list(ATTACK_TYPES),
+        }
 
     @router.get("/fuzz/jobs/{job_id}")
     async def get_fuzz_job(job_id: str) -> dict[str, Any]:

@@ -358,7 +358,40 @@ export interface FuzzResult {
   length_delta: number;
   error: string;
   interesting: boolean;
+  hit: boolean;
+  extracted: string;
   created_at: number;
+}
+
+export type AttackType = "sniper" | "battering-ram" | "pitchfork" | "cluster-bomb";
+
+export type GeneratorKind =
+  | "list"
+  | "numbers"
+  | "dates"
+  | "bruteforce"
+  | "substitution"
+  | "grep"
+  | "file"
+  | "custom";
+
+export type ProcessingRuleKind =
+  | "url-encode"
+  | "base64"
+  | "hash"
+  | "prefix"
+  | "suffix"
+  | "replace"
+  | "extract";
+
+export interface Generator {
+  kind: GeneratorKind;
+  options: Record<string, unknown>;
+}
+
+export interface ProcessingRule {
+  kind: ProcessingRuleKind;
+  options: Record<string, unknown>;
 }
 
 export interface FuzzJob {
@@ -371,6 +404,11 @@ export interface FuzzJob {
   completed: number;
   payloads: string[];
   position_filter: string;
+  attack_type: AttackType;
+  payload_sets: string[][];
+  rules: ProcessingRule[];
+  grep_match: string;
+  grep_extract: string;
   template: FuzzTemplate;
   results: FuzzResult[];
 }

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { api, setApiBase } from "../lib/api";
 import type {
   AppConfig,
+  AttackType,
   CheckDescriptor,
   CommandDescriptor,
   DashboardData,
@@ -10,6 +11,7 @@ import type {
   ExchangeSummary,
   Finding,
   FuzzJob,
+  Generator,
   HeldFrame,
   HeldItem,
   InterceptState,
@@ -18,6 +20,7 @@ import type {
   Note,
   OrganizerHost,
   PluginInfo,
+  ProcessingRule,
   Project,
   ProxyRule,
   RepeaterTab,
@@ -227,7 +230,18 @@ interface Store {
     headers?: Record<string, string[]>;
     body?: string;
     payloads: string[];
+    attack_type?: AttackType;
+    payload_sets?: string[][];
+    rules?: ProcessingRule[];
+    grep_match?: string;
+    grep_extract?: string;
+    positions?: string;
   }): Promise<void>;
+  generatePayloads(
+    generator: Generator,
+    rules?: ProcessingRule[],
+    limit?: number,
+  ): Promise<{ payloads: string[]; count: number }>;
   stopFuzzJob(jobId: string): Promise<void>;
   refreshScanJobs(): Promise<void>;
   refreshChecks(): Promise<void>;
@@ -810,6 +824,19 @@ export const useStore = create<Store>((set, get) => ({
       set({ error: (error as Error).message });
     } finally {
       set({ busy: false });
+    }
+  },
+
+  async generatePayloads(generator, rules = [], limit = 5000) {
+    try {
+      const response = await api.post<{ payloads: string[]; count: number }>(
+        "/api/fuzz/payloads",
+        { generator, rules, limit },
+      );
+      return { payloads: response.payloads ?? [], count: response.count ?? 0 };
+    } catch (error) {
+      set({ error: (error as Error).message });
+      return { payloads: [], count: 0 };
     }
   },
 

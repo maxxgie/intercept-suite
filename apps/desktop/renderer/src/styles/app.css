@@ -1416,27 +1416,30 @@ textarea:focus {
 .fuzzer-input {
   display: flex;
   flex-direction: column;
-  height: 44%;
+  height: 54%;
   min-height: 0;
+  overflow-y: auto;
   border-bottom: 1px solid var(--border);
 }
 
 .fuzzer-input > .editor {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 auto;
+  min-height: 150px;
 }
 
 .fuzzer-payloads {
   display: flex;
   flex-direction: column;
-  height: 34%;
+  flex: 0 0 auto;
+  height: auto;
   min-height: 0;
+  padding-bottom: 10px;
   border-top: 1px solid var(--border-soft);
 }
 
 .fuzzer-payloads > .editor {
-  flex: 1;
-  min-height: 0;
+  flex: 0 0 auto;
+  min-height: 130px;
 }
 
 .fuzzer-results {
