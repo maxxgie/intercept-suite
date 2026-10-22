@@ -1583,8 +1583,66 @@ textarea:focus {
   color: var(--text-dim);
 }
 
-/* ------------------------------------------------------------- sequencer */
+/* --------------------------------------------------------------- decoder */
 
+.decoder-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.decoder-panel > .editor {
+  min-height: 130px;
+  flex: 0 0 auto;
+  border: none;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.decoder-steps {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.decoder-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.decoder-step:last-child {
+  border-bottom: none;
+}
+
+.decoder-chain {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.decoder-chain-step {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.decoder-chain-step:last-child {
+  border-bottom: none;
+}
+
+.decoder-panel .body-view {
+  flex: 0 0 auto;
+  max-height: 320px;
+  overflow: auto;
+}
+
+/* ------------------------------------------------------------- sequencer */
 .sequencer {
   display: flex;
   flex: 1;

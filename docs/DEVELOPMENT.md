@@ -93,6 +93,10 @@ square, the serial correlation, the Monte Carlo estimate of pi, the bit bias and
 the longest run), the verdicts for random samples, counters, repeated tokens and
 tokens that hold a clock, and the forgery of a JSON web token.
 
+`tests/test_decoder.py` covers the decoder: every conversion in both
+directions, the digests, the recognition of a hash, the chains and the smart
+decode.
+
 `tests/test_workspace.py` covers the workspace layer: the filter language, the
 command registry, the event log, the notes, the issues, the sessions, the
 targets, the tasks, the projects, the report generator, the WebSocket framing
@@ -163,6 +167,35 @@ the note that goes with it tells the reader why.
 The verdicts are `random`, `weak` and `predictable`. A measure that says
 something is wrong takes points off the score, and the note that goes with it
 tells the reader why.
+
+## Adding a decoding to the decoder
+
+The decoder lives in `src/intercept/tools/decoder.py`. A conversion is a
+function that takes the text and gives the text back, and it is put in the two
+maps that hold them:
+
+```python
+def _decode_base32(value: str) -> str:
+    """Take a base32 value apart."""
+    ...
+
+
+_DECODERS = {
+    ...
+    "base32": _decode_base32,
+}
+
+_ENCODERS = {
+    ...
+    "base32": _encode_base32,
+}
+```
+
+A decoder that cannot make sense of the value raises `DecoderError`, and the
+API turns that into a message that says why. A kind that is added to
+`TRANSFORM_KINDS` and to `KIND_LABELS` shows up in the interface, in the
+example plugin and in the smart decode, which tries every kind and ranks the
+answers.
 
 ## Adding a scanner check
 

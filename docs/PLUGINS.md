@@ -157,6 +157,27 @@ class VerboseBannerCheck(PassiveCheck):
         return [Finding(check_id=self.id, title="Outdated server banner", url=request.url)]
 ```
 
+## Using the decoder
+
+The conversions live in the engine, so a plugin does not have to write them
+again. `intercept.tools.decoder` holds a function for every kind and a
+`Decoder` object that wraps them:
+
+```python
+from intercept.tools.decoder import Decoder, DecoderError
+
+try:
+    result = Decoder().convert(value, "base64", "decode")
+except DecoderError as exc:
+    return {"error": str(exc)}
+return {"output": result["output"]}
+```
+
+`Decoder().chain` runs several conversions one after the other and keeps the
+result of every step, and `Decoder().smart` tries every conversion and returns
+the answers that look the most like text. The `encodings` example plugin is a
+tool that does nothing but this.
+
 ## Measuring a token
 
 The sequencer judges how random a token really is. It is not a plugin, but a

@@ -35,6 +35,8 @@ browser  ──HTTP(S)/2──▶  proxy engine  ──HTTP(S)/2──▶  origi
 | Scanner: injection, auth, token, GraphQL and web hardening checks | Working |
 | Sequencer: judge how random a token really is, over many samples | Working |
 | Sequencer: find a counter, a clock or a weak secret behind a token | Working |
+| Decoder: URL, HTML, base64, base32, hex, ASCII, binary, gzip, deflate, unicode, JWT | Working |
+| Decoder: hash generation, smart decode and chained transforms | Working |
 | Site map built from observed traffic, with scope rules | Working |
 | Spider: crawl in-scope links | Working |
 | Interactive interception: hold a request and decide what happens | Working |
@@ -228,6 +230,15 @@ command palette (`Ctrl K`).
 
 **Tools**
 
+* **Decoder** turns a value into something readable and back again. It knows
+  URL encoding, HTML entities, base64, base32, hexadecimal, ASCII and binary
+  codes, gzip and deflate, unicode escapes and JSON web tokens, and it
+  recognises the hashes that turn up in password databases. On top of the plain
+  conversions it can make a digest of a value (MD5, the SHA family, SHA-3,
+  BLAKE2, CRC32, Adler32 and the keyed HMACs), try every decoding and rank the
+  answers by how much they look like something a person would have written,
+  and run several conversions one after the other, so a value that was base64
+  encoded and then url encoded can be taken apart in one go.
 * **Browser** fetches a page through the proxy, so everything it loads ends up
   in the same history as the traffic from a real browser.
 * **Extensions** lists the tools contributed by plugins.
@@ -332,7 +343,7 @@ src/intercept/        the engine
   crypto/             certificate authority and trust store installation
   proxy/              the proxy engine: parser, HTTP/2, upstream pool, interception, websockets
   store/              traffic history, findings, notes, issues, targets, tasks, projects, sessions
-  tools/              repeater, fuzzer, sequencer, spider, shared client
+  tools/              repeater, fuzzer, sequencer, decoder, spider, shared client
   scanner/            check framework and scan engine
   plugins/            plugin API and manager
   api/                REST and WebSocket API

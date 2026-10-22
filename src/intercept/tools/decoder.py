@@ -244,11 +244,14 @@ def _decode_ascii(value: str) -> str:
     codes: list[int] = []
     for part in parts:
         try:
-            codes.append(_code(part))
+            code = _code(part)
         except ValueError as exc:
             raise DecoderError(f"{part!r} is not a number") from exc
+        if not 0 <= code <= 255:
+            raise DecoderError(f"{part!r} is not an ASCII code")
+        codes.append(code)
     try:
-        return bytes(code % 256 for code in codes).decode("utf-8", "replace")
+        return bytes(codes).decode("utf-8", "replace")
     except (ValueError, OverflowError) as exc:
         raise DecoderError(str(exc)) from exc
 
@@ -288,6 +291,7 @@ def _decode_unicode(value: str) -> str:
     if not text:
         raise DecoderError("there is nothing to decode")
     if "\\u" in text.lower():
+
         def replace(match: re.Match[str]) -> str:
             code = match.group(1) or match.group(2)
             return chr(int(code, 16))
@@ -296,11 +300,8 @@ def _decode_unicode(value: str) -> str:
     parts = [part for part in re.split(r"[\s,;]+", text) if part]
     codes = []
     for part in parts:
-        cleaned = part.strip()
-        if cleaned.lower().startswith(("u+", "0x", "u-")):
-            cleaned = cleaned[2:]
         try:
-            codes.append(int(cleaned, 16) if _HEX_RE.match(cleaned) else int(cleaned, 10))
+            codes.append(_code(part))
         except ValueError as exc:
             raise DecoderError(f"{part!r} is not a code point") from exc
     try:
@@ -360,9 +361,7 @@ def _binary_payload(value: str) -> bytes:
             pass
     cleaned = _clean(text)
     if cleaned and set(cleaned) <= {"0", "1"} and len(cleaned) % 8 == 0:
-        return bytes(
-            int(cleaned[index : index + 8], 2) for index in range(0, len(cleaned), 8)
-        )
+        return bytes(int(cleaned[index : index + 8], 2) for index in range(0, len(cleaned), 8))
     try:
         return base64.b64decode(cleaned + "=" * (-len(cleaned) % 4), validate=True)
     except (binascii.Error, ValueError) as exc:
@@ -386,9 +385,9 @@ def _decode_jwt(value: str) -> str:
         except ValueError:
             result[name] = _from_bytes(raw)
     result["signature"] = signature
-    result["algorithm"] = str(result["header"].get("alg", "")) if isinstance(
-        result["header"], dict
-    ) else ""
+    result["algorithm"] = (
+        str(result["header"].get("alg", "")) if isinstance(result["header"], dict) else ""
+    )
     return json.dumps(result, indent=2, sort_keys=True)
 
 
@@ -470,9 +469,7 @@ def identify_hash(value: str) -> list[HashCandidate]:
         )
         return found
     if lowered.startswith("$argon2"):
-        found.append(
-            HashCandidate("argon2", "Argon2", len(text), "An Argon2 hash.")
-        )
+        found.append(HashCandidate("argon2", "Argon2", len(text), "An Argon2 hash."))
         return found
     if lowered.startswith(("pbkdf2_sha", "django_pbkdf2", "scrypt$")):
         found.append(
@@ -677,10 +674,12 @@ class DecodeCandidate:
         }
 
 
-def _score(value: str) -> tuple[float, str]:
+def _score(value: str, original: str) -> tuple[float, str]:
     """How much a result looks like something a person would have written."""
     if not value:
         return 0.0, "the result is empty"
+    if value.strip() == original.strip():
+        return 0.05, "nothing was decoded"
     ratio = _printable_ratio(value)
     if ratio < 0.85:
         return ratio * 0.5, "most of it is not text"
@@ -719,7 +718,7 @@ def smart_decode(value: str) -> list[DecodeCandidate]:
             continue
         except Exception:  # noqa: BLE001 - a broken decoder must not stop the rest
             continue
-        score, reason = _score(output)
+        score, reason = _score(output, value)
         if score <= 0.0:
             continue
         candidates.append(

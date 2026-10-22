@@ -16,7 +16,7 @@ Intercept is two processes that talk over a local HTTP API.
 │ Daemon (src/intercept)                                          │
 │   api/          REST + WebSocket                               │
 │   proxy/        listener, CONNECT handling, HTTP/2, upstream pool│
-│   tools/        repeater, fuzzer, sequencer, spider                │
+│   tools/        repeater, fuzzer, sequencer, decoder, spider        │
 │   scanner/      check framework and scan engine                 │
 │   plugins/      registry and execution                         │
 │   store/        history, findings, workspace stores, scope      │
@@ -157,6 +157,27 @@ length of the part that changes, so both are visible.
 
 The measures and the notes they produce are turned into one verdict, and the
 report is what the API and the interface show.
+
+### The decoder
+
+`tools/decoder.py` turns a value into something readable and back again. Each
+conversion is a small function over the text, and the kind decides which one is
+used: percent encoding, HTML entities, base64, base32, hexadecimal, ASCII and
+binary codes, gzip and deflate, unicode escapes and JSON web tokens.
+
+Three things sit on top of the conversions:
+
+* **hash generation**, which digests a value with the algorithm that is asked
+  for, with or without a key for the keyed ones;
+* **smart decode**, which tries every conversion and ranks the answers by how
+  much they look like something a person would have written, so a result that
+  did not change anything comes last;
+* **chained transforms**, which run several conversions one after the other and
+  keep the result of every step, so a value that was base64 encoded and then
+  url encoded can be taken apart in one go.
+
+The decoder does not use the network, so it needs no client and it is not
+framed in the history.
 
 ### The scanner
 

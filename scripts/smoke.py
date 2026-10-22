@@ -7,6 +7,7 @@ interception.
 
 from __future__ import annotations
 
+import hashlib
 import http.server
 import json
 import os
@@ -453,6 +454,69 @@ def main() -> int:
             "missing security headers are reported",
             any(f["check_id"] == "headers.security" for f in findings["items"]),
             str([f["check_id"] for f in findings["items"]]),
+        )
+
+        # ---- decoder ---------------------------------------------------
+        kinds = httpx.get(f"{api}/api/decoder/kinds", timeout=5).json()
+        check(
+            "the decoder publishes its kinds",
+            len(kinds["kinds"]) >= 12,
+            str(len(kinds["kinds"])),
+        )
+        converted = httpx.post(
+            f"{api}/api/decoder/convert",
+            json={"value": "aGVsbG8gd29ybGQ=", "kind": "base64", "mode": "decode"},
+            timeout=5,
+        ).json()
+        check(
+            "the decoder decodes base64",
+            converted["output"] == "hello world",
+            converted["output"],
+        )
+        chained = httpx.post(
+            f"{api}/api/decoder/chain",
+            json={
+                "value": "aGVsbG8gd29ybGQ=",
+                "steps": [
+                    {"kind": "base64", "mode": "decode"},
+                    {"kind": "url", "mode": "decode"},
+                ],
+            },
+            timeout=5,
+        ).json()
+        check("the decoder runs a chain", chained["output"] == "hello world", chained["output"])
+        smart = httpx.post(
+            f"{api}/api/decoder/smart",
+            json={"value": "aGVsbG8gd29ybGQ="},
+            timeout=5,
+        ).json()
+        check(
+            "the smart decode finds the encoding",
+            smart["best"]["kind"] == "base64",
+            str(smart["best"]),
+        )
+        digest = httpx.post(
+            f"{api}/api/decoder/hash",
+            json={"value": "hello", "algorithm": "sha256"},
+            timeout=5,
+        ).json()
+        check(
+            "the decoder makes a digest",
+            digest["output"] == hashlib.sha256(b"hello").hexdigest(),
+            digest["output"],
+        )
+
+        # ---- sequencer --------------------------------------------------
+        report = httpx.post(
+            f"{api}/api/sequencer/analyze",
+            json={"samples": [f"token-{index}" for index in range(20)], "kind": "auto"},
+            timeout=5,
+        ).json()
+        check("the sequencer measures the samples", report["samples"] == 20, str(report["samples"]))
+        check(
+            "the sequencer calls a counter predictable",
+            report["verdict"] == "predictable",
+            report["verdict"],
         )
 
         # ---- workspace -------------------------------------------------

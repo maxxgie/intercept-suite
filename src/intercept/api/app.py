@@ -28,6 +28,7 @@ from intercept.proxy.upstream import UpstreamError
 from intercept.proxy.websocket import WebSocketFrame
 from intercept.scanner.engine import ScanOptions
 from intercept.store.sitemap import ScopeRule
+from intercept.tools.decoder import Decoder, DecoderError
 from intercept.tools.fuzzer import ATTACK_TYPES
 from intercept.tools.generators import (
     GENERATOR_KINDS,
@@ -216,6 +217,37 @@ class SequencerPayload(BaseModel):
     kind: str = "auto"
     #: The name the token was found under, which helps with guessing.
     name: str = ""
+
+
+class DecoderPayload(BaseModel):
+    """A value and the conversion that should be made to it."""
+
+    value: str = ""
+    kind: str = "url"
+    mode: str = "decode"
+    options: dict[str, Any] = Field(default_factory=dict)
+
+
+class DecoderChainPayload(BaseModel):
+    """A value and the conversions that should be made to it, one after another."""
+
+    value: str = ""
+    steps: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DecoderSmartPayload(BaseModel):
+    """A value that the decoder should try to make sense of."""
+
+    value: str = ""
+
+
+class DecoderHashPayload(BaseModel):
+    """A value and the digest that should be made of it."""
+
+    value: str = ""
+    algorithm: str = "sha256"
+    #: The key of the keyed digests.
+    key: str = ""
 
 
 class ScanJobPayload(BaseModel):
@@ -1393,6 +1425,47 @@ def create_api(app: InterceptApp) -> FastAPI:
             raise HTTPException(status_code=400, detail="no samples given")
         report = Sequencer().analyse(samples, kind=payload.kind, name=payload.name)
         return report.to_dict()
+
+    # ------------------------------------------------------------- decoder
+
+    @router.get("/decoder/kinds")
+    async def list_decoder_kinds() -> dict[str, Any]:
+        """The conversions and the digests the decoder knows."""
+        return Decoder().catalog()
+
+    @router.post("/decoder/convert")
+    async def convert_value(payload: DecoderPayload) -> dict[str, Any]:
+        """One conversion."""
+        try:
+            return Decoder().convert(
+                payload.value,
+                payload.kind,
+                payload.mode,
+                payload.options or None,
+            )
+        except DecoderError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/decoder/chain")
+    async def convert_chain(payload: DecoderChainPayload) -> dict[str, Any]:
+        """Several conversions, one after the other."""
+        try:
+            return Decoder().chain(payload.value, payload.steps)
+        except DecoderError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/decoder/smart")
+    async def smart_decode_value(payload: DecoderSmartPayload) -> dict[str, Any]:
+        """Every decoding that made sense, the best one first."""
+        return Decoder().smart(payload.value)
+
+    @router.post("/decoder/hash")
+    async def make_digest(payload: DecoderHashPayload) -> dict[str, Any]:
+        """A digest of a value."""
+        try:
+            return Decoder().digest(payload.value, payload.algorithm, payload.key)
+        except DecoderError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # ------------------------------------------------------------ findings
 
