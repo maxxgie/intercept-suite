@@ -159,6 +159,13 @@ export const IconTokens = (props: IconProps) => (
   </Glyph>
 );
 
+export const IconSequencer = (props: IconProps) => (
+  <Glyph {...props}>
+    <path d="M3 12h3l2-5 3 10 3-8 2 3h5" />
+    <path d="M3 4v16" />
+  </Glyph>
+);
+
 export const IconLogger = (props: IconProps) => (
   <Glyph {...props}>
     <path d="M5 4h14v16H5z" />

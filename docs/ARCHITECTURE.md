@@ -16,7 +16,7 @@ Intercept is two processes that talk over a local HTTP API.
 │ Daemon (src/intercept)                                          │
 │   api/          REST + WebSocket                               │
 │   proxy/        listener, CONNECT handling, HTTP/2, upstream pool│
-│   tools/        repeater, fuzzer, spider                        │
+│   tools/        repeater, fuzzer, sequencer, spider                │
 │   scanner/      check framework and scan engine                 │
 │   plugins/      registry and execution                         │
 │   store/        history, findings, workspace stores, scope      │
@@ -137,6 +137,26 @@ is marked as interesting.
 
 The template is a normal `Request`, so the fuzzer reuses the request model
 rather than inventing a second one.
+
+### The sequencer
+
+`tools/sequencer.py` answers one question: is this token random? It works on a
+list of samples of the same token. Every sample is measured on its own — the
+entropy, the spread of the characters, the dependence between the bytes, the
+evenness of the bits, the length of the longest run — and the samples are then
+looked at together, because a token can look random while the way it is built
+is not: a counter, a clock, a fixed prefix with a small random part or a value
+that repeats.
+
+A JSON web token is opened as well. A token that says that it is not signed, or
+that is signed with a secret that is used everywhere, is reported as forgeable.
+
+The part that every sample shares is left out of the measures, because a fixed
+prefix is not randomness. The report keeps the whole length of a token and the
+length of the part that changes, so both are visible.
+
+The measures and the notes they produce are turned into one verdict, and the
+report is what the API and the interface show.
 
 ### The scanner
 

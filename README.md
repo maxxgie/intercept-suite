@@ -33,6 +33,8 @@ browser  ──HTTP(S)/2──▶  proxy engine  ──HTTP(S)/2──▶  origi
 | Scanner: active and passive checks, findings with severities | Working |
 | Scanner: crawls the target and probes the places that take input | Working |
 | Scanner: injection, auth, token, GraphQL and web hardening checks | Working |
+| Sequencer: judge how random a token really is, over many samples | Working |
+| Sequencer: find a counter, a clock or a weak secret behind a token | Working |
 | Site map built from observed traffic, with scope rules | Working |
 | Spider: crawl in-scope links | Working |
 | Interactive interception: hold a request and decide what happens | Working |
@@ -200,6 +202,18 @@ command palette (`Ctrl K`).
   DOM based XSS. Every finding carries a severity, the evidence that was seen
   and the way to fix it.
 * **Findings** collects everything the scanner reported, filterable by severity.
+* **Sequencer** judges how random a token really is. Give it several samples of
+  the same token — a session identifier, an anti-CSRF token, an API key or a
+  JSON web token — and it measures the entropy, the spread of the characters,
+  the dependence between the bytes and the length of the runs, and then looks
+  at the samples together, because a token can look random while the way it is
+  built is not: a counter, a clock, a fixed prefix with a small random part or
+  a value that repeats. A JSON web token is opened as well, and a token that
+  says that it is not signed, or that is signed with a secret that is used
+  everywhere, is reported as forgeable. The part that every sample shares is
+  left out of the measures, because a fixed prefix is not randomness. The
+  verdict is *random*, *weak* or *predictable*, and every measure that led to
+  it is shown next to the reason.
 
 **Work**
 
@@ -318,7 +332,7 @@ src/intercept/        the engine
   crypto/             certificate authority and trust store installation
   proxy/              the proxy engine: parser, HTTP/2, upstream pool, interception, websockets
   store/              traffic history, findings, notes, issues, targets, tasks, projects, sessions
-  tools/              repeater, fuzzer, spider, shared client
+  tools/              repeater, fuzzer, sequencer, spider, shared client
   scanner/            check framework and scan engine
   plugins/            plugin API and manager
   api/                REST and WebSocket API

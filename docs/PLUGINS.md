@@ -157,6 +157,28 @@ class VerboseBannerCheck(PassiveCheck):
         return [Finding(check_id=self.id, title="Outdated server banner", url=request.url)]
 ```
 
+## Measuring a token
+
+The sequencer judges how random a token really is. It is not a plugin, but a
+plugin may use it, either from a tool or from a check that has several samples
+of a token to hand:
+
+```python
+from intercept.tools.sequencer import Sequencer
+
+report = Sequencer().analyse(samples, kind="csrf", name="csrf_token")
+if report.verdict != "random":
+    return {
+        "output": f"{report.verdict}: {report.notes[0]}",
+    }
+```
+
+`analyse` takes the samples, the kind of token (`auto` lets the sequencer guess
+from the name and the shape) and the name the token was found under. The report
+carries the verdict (`random`, `weak` or `predictable`), the measures and the
+notes that explain the verdict. A JSON web token is opened as well, so
+`report.jwt` says whether the token can be forged.
+
 ## Subscribing to events
 
 ```python

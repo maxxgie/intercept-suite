@@ -476,8 +476,38 @@ export interface ScanJob {
   findings: Finding[];
 }
 
-/* ------------------------------------------------------------------ workspace */
+/* ---------------------------------------------------------------- sequencer */
 
+export interface SequencerReport {
+  kind: string;
+  samples: number;
+  length: number;
+  random_length: number;
+  unique: number;
+  verdict: "random" | "weak" | "predictable" | "unknown";
+  score: number;
+  entropy: number;
+  entropy_per_character: number;
+  expected_entropy: number;
+  total_bits: number;
+  chi_square: number;
+  chi_square_p: number;
+  serial_correlation: number;
+  monte_carlo_pi: number;
+  bit_bias: number;
+  unique_bytes: number;
+  longest_run: number;
+  common_prefix: string;
+  common_suffix: string;
+  sequential: boolean;
+  duplicates: string[];
+  embedded_timestamp: number;
+  characters: Record<string, number>;
+  jwt: Record<string, unknown>;
+  notes: string[];
+}
+
+/* ------------------------------------------------------------------ workspace */
 export interface CommandDescriptor {
   id: string;
   title: string;

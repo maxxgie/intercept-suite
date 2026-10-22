@@ -26,6 +26,7 @@ import RulesView from "./components/RulesView";
 import ScanStatusView from "./components/ScanStatusView";
 import ScannerView from "./components/ScannerView";
 import ScopeView from "./components/ScopeView";
+import SequencerView from "./components/SequencerView";
 import SettingsView from "./components/SettingsView";
 import Sidebar from "./components/Sidebar";
 import SiteMapView from "./components/SiteMapView";
@@ -204,6 +205,7 @@ export default function App() {
             {view === "decoder" && <DecoderView />}
             {view === "comparer" && <ComparerView />}
             {view === "tokens" && <TokenAnalysisView />}
+            {view === "sequencer" && <SequencerView />}
             {view === "issues" && <IssuesView />}
             {view === "notes" && <NotesView />}
             {view === "organizer" && <OrganizerView />}

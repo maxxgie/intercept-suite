@@ -88,6 +88,11 @@ the fallback to HTTP/1.x against an origin that does not speak HTTP/2.
 `tests/test_tools_fuzz.py` covers the fuzzer, the scanner and the findings
 store.
 
+`tests/test_sequencer.py` covers the sequencer: the measures (entropy, the chi
+square, the serial correlation, the Monte Carlo estimate of pi, the bit bias and
+the longest run), the verdicts for random samples, counters, repeated tokens and
+tokens that hold a clock, and the forgery of a JSON web token.
+
 `tests/test_workspace.py` covers the workspace layer: the filter language, the
 command registry, the event log, the notes, the issues, the sessions, the
 targets, the tasks, the projects, the report generator, the WebSocket framing
@@ -129,6 +134,35 @@ A tool that produces its own requests should:
 
 To surface a tool in the interface, expose it through the REST API and add a
 view under `apps/desktop/renderer/src/components/`.
+
+## Adding a measure to the sequencer
+
+The sequencer lives in `src/intercept/tools/sequencer.py`. It works on a list
+of samples of the same token: every sample is measured on its own and the
+samples are looked at together.
+
+A measure is a plain function over bytes that returns a number, and it is added
+to `Sequencer.analyse` and to the report:
+
+```python
+def longest_run(data: bytes) -> int:
+    """The longest run of the same byte in the data."""
+    ...
+```
+
+The report is the only thing the API and the interface see, so a new measure
+belongs in `SequencerReport` as well, with its value in `to_dict()`. A note
+that explains what the measure means goes into `_judge`, where the notes and
+the score are worked out.
+
+The measures are taken over the part of the samples that changes, which
+`_random_parts` works out from the prefix and the suffix that all the samples
+share. A measure that says something is wrong takes points off the score, and
+the note that goes with it tells the reader why.
+
+The verdicts are `random`, `weak` and `predictable`. A measure that says
+something is wrong takes points off the score, and the note that goes with it
+tells the reader why.
 
 ## Adding a scanner check
 

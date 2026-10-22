@@ -27,6 +27,7 @@ import type {
   RuleDraft,
   ScanJob,
   ScanOptions,
+  SequencerReport,
   Session,
   SiteHost,
   Target,
@@ -53,6 +54,7 @@ export type View =
   | "decoder"
   | "comparer"
   | "tokens"
+  | "sequencer"
   | "issues"
   | "notes"
   | "organizer"
@@ -124,6 +126,7 @@ interface Store {
   activeScanJobId: string | null;
   checks: CheckDescriptor[];
   findings: Finding[];
+  sequencerReport: SequencerReport | null;
   /* workspace */
   filter: string;
   filterError: string;
@@ -255,6 +258,7 @@ interface Store {
   refreshFindings(): Promise<void>;
   acknowledgeFinding(id: string): Promise<void>;
   clearFindings(): Promise<void>;
+  analyzeTokens(samples: string[], kind: string, name: string): Promise<void>;
   /* workspace */
   setFilter(expression: string): Promise<void>;
   refreshCommands(): Promise<void>;
@@ -352,6 +356,7 @@ export const useStore = create<Store>((set, get) => ({
   activeScanJobId: null,
   checks: [],
   findings: [],
+  sequencerReport: null,
   filter: "",
   filterError: "",
   commands: [],
@@ -910,6 +915,22 @@ export const useStore = create<Store>((set, get) => ({
   async clearFindings() {
     await api.delete("/api/findings");
     set({ findings: [] });
+  },
+
+  async analyzeTokens(samples, kind, name) {
+    set({ busy: true });
+    try {
+      const report = await api.post<SequencerReport>("/api/sequencer/analyze", {
+        samples,
+        kind,
+        name,
+      });
+      set({ sequencerReport: report });
+    } catch (error) {
+      set({ error: (error as Error).message });
+    } finally {
+      set({ busy: false });
+    }
   },
 
   /* ------------------------------------------------------------- workspace */

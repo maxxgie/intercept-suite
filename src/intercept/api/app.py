@@ -37,6 +37,7 @@ from intercept.tools.generators import (
     apply_rules,
 )
 from intercept.tools.repeater import request_from_raw
+from intercept.tools.sequencer import TOKEN_KINDS, Sequencer
 
 log = logging.getLogger("intercept.api")
 
@@ -205,6 +206,16 @@ class GeneratePayloadsPayload(BaseModel):
     generator: GeneratorPayload = Field(default_factory=GeneratorPayload)
     rules: list[dict[str, Any]] = Field(default_factory=list)
     limit: int = 500
+
+
+class SequencerPayload(BaseModel):
+    """The samples of a token and what the sequencer should say about them."""
+
+    samples: list[str] = Field(default_factory=list)
+    #: The kind of token, or "auto" to let the sequencer guess.
+    kind: str = "auto"
+    #: The name the token was found under, which helps with guessing.
+    name: str = ""
 
 
 class ScanJobPayload(BaseModel):
@@ -1366,6 +1377,22 @@ def create_api(app: InterceptApp) -> FastAPI:
         if not app.scanner.delete_job(job_id):
             raise HTTPException(status_code=404, detail="job not found")
         return {"deleted": job_id}
+
+    # ----------------------------------------------------------- sequencer
+
+    @router.get("/sequencer/kinds")
+    async def list_token_kinds() -> dict[str, Any]:
+        """The kinds of token the sequencer knows."""
+        return {"kinds": list(TOKEN_KINDS)}
+
+    @router.post("/sequencer/analyze")
+    async def analyze_tokens(payload: SequencerPayload) -> dict[str, Any]:
+        """What the sequencer says about a set of samples of the same token."""
+        samples = [sample for sample in payload.samples if sample and sample.strip()]
+        if not samples:
+            raise HTTPException(status_code=400, detail="no samples given")
+        report = Sequencer().analyse(samples, kind=payload.kind, name=payload.name)
+        return report.to_dict()
 
     # ------------------------------------------------------------ findings
 
