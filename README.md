@@ -37,6 +37,8 @@ browser  ──HTTP(S)/2──▶  proxy engine  ──HTTP(S)/2──▶  origi
 | Sequencer: find a counter, a clock or a weak secret behind a token | Working |
 | Decoder: URL, HTML, base64, base32, hex, ASCII, binary, gzip, deflate, unicode, JWT | Working |
 | Decoder: hash generation, smart decode and chained transforms | Working |
+| Comparer: two requests, responses, bodies or files, side by side | Working |
+| Comparer: differences and similarities for JSON, XML, HTML and tokens | Working |
 | Site map built from observed traffic, with scope rules | Working |
 | Spider: crawl in-scope links | Working |
 | Interactive interception: hold a request and decide what happens | Working |
@@ -239,6 +241,17 @@ command palette (`Ctrl K`).
   answers by how much they look like something a person would have written,
   and run several conversions one after the other, so a value that was base64
   encoded and then url encoded can be taken apart in one go.
+* **Comparer** puts two things next to each other and says what is different
+  and what is the same. Pick two exchanges from the history and compare the
+  requests, the responses or the bodies. A request is compared by its first
+  line, its headers and its body; a response by its status, its headers and
+  its body. A body that is JSON is compared key by key, XML by element and
+  attribute, HTML by tag and text, and the tokens that are in it are compared
+  by name, so a session that did not change is told apart from one that did.
+  A file that is not text is compared byte by byte, with the places that
+  differ reported. The view shows the two side by side with the lines that
+  differ marked, the list of the differences and the list of the things that
+  are the same.
 * **Browser** fetches a page through the proxy, so everything it loads ends up
   in the same history as the traffic from a real browser.
 * **Extensions** lists the tools contributed by plugins.
@@ -343,7 +356,7 @@ src/intercept/        the engine
   crypto/             certificate authority and trust store installation
   proxy/              the proxy engine: parser, HTTP/2, upstream pool, interception, websockets
   store/              traffic history, findings, notes, issues, targets, tasks, projects, sessions
-  tools/              repeater, fuzzer, sequencer, decoder, spider, shared client
+  tools/              repeater, fuzzer, sequencer, decoder, comparer, spider, client
   scanner/            check framework and scan engine
   plugins/            plugin API and manager
   api/                REST and WebSocket API

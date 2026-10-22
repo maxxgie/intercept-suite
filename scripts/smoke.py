@@ -456,6 +456,40 @@ def main() -> int:
             str([f["check_id"] for f in findings["items"]]),
         )
 
+        # ---- comparer --------------------------------------------------
+        kinds = httpx.get(f"{api}/api/comparer/kinds", timeout=5).json()
+        check(
+            "the comparer publishes its kinds",
+            len(kinds["kinds"]) >= 8,
+            str(len(kinds["kinds"])),
+        )
+        compared = httpx.post(
+            f"{api}/api/comparer/compare",
+            json={
+                "left": '{"user":"ann","role":"admin"}',
+                "right": '{"user":"ann","role":"guest"}',
+                "kind": "json",
+            },
+            timeout=5,
+        ).json()
+        check(
+            "the comparer finds the difference",
+            any(difference["path"] == "role" for difference in compared["differences"]),
+            str(compared["differences"]),
+        )
+        check(
+            "the comparer finds what is the same",
+            any(similarity["path"] == "user" for similarity in compared["similarities"]),
+            str(compared["similarities"]),
+        )
+        check("the comparer puts the two next to each other", len(compared["rows"]) == 1)
+        exchanged = httpx.post(
+            f"{api}/api/comparer/exchanges",
+            json={"left_id": "nope", "right_id": "nope", "part": "response"},
+            timeout=5,
+        )
+        check("the comparer reports an exchange that is not there", exchanged.status_code == 404)
+
         # ---- decoder ---------------------------------------------------
         kinds = httpx.get(f"{api}/api/decoder/kinds", timeout=5).json()
         check(

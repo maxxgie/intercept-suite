@@ -16,7 +16,7 @@ Intercept is two processes that talk over a local HTTP API.
 │ Daemon (src/intercept)                                          │
 │   api/          REST + WebSocket                               │
 │   proxy/        listener, CONNECT handling, HTTP/2, upstream pool│
-│   tools/        repeater, fuzzer, sequencer, decoder, spider        │
+│   tools/        repeater, fuzzer, sequencer, decoder, comparer      │
 │   scanner/      check framework and scan engine                 │
 │   plugins/      registry and execution                         │
 │   store/        history, findings, workspace stores, scope      │
@@ -178,6 +178,28 @@ Three things sit on top of the conversions:
 
 The decoder does not use the network, so it needs no client and it is not
 framed in the history.
+
+### The comparer
+
+`tools/comparer.py` puts two things next to each other. Every comparison has
+three parts: the differences, the similarities and the rows of the side by side
+view.
+
+The kind decides how the two things are read:
+
+* a **request** and a **response** are taken apart into the first line, the
+  headers and the body, and the body is compared by what it holds;
+* **JSON** is compared key by key, with the path of every key that changed;
+* **XML** is compared element by element, with the attributes of every element
+  that changed;
+* **HTML** is compared tag by tag, with the text that changed;
+* **tokens** are compared by name, so a session that stayed the same is told
+  apart from one that was replaced;
+* a **file** that is not text is compared byte by byte, with the places that
+  differ reported.
+
+The side by side view is a line diff, and the part of a line that changed is
+marked so that the eye goes straight to it.
 
 ### The scanner
 

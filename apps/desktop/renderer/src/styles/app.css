@@ -2269,6 +2269,21 @@ textarea:focus {
   color: #f7d089;
 }
 
+.compare-cell.added {
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.compare-cell.removed {
+  background: rgba(240, 180, 41, 0.1);
+  color: #f7d089;
+}
+
+.compare-cell mark {
+  background: rgba(240, 180, 41, 0.4);
+  color: inherit;
+  border-radius: 2px;
+}
+
 .export-view {
   overflow: auto;
   padding: 18px 22px;

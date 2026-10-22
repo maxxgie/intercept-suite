@@ -178,6 +178,25 @@ result of every step, and `Decoder().smart` tries every conversion and returns
 the answers that look the most like text. The `encodings` example plugin is a
 tool that does nothing but this.
 
+## Comparing two things
+
+The comparer lives in the engine, and a plugin may use it to say what is
+different between two things it has collected:
+
+```python
+from intercept.tools.comparer import compare_documents
+
+result = compare_documents(left, right, "json")
+for difference in result.differences:
+    return {"output": f"{difference.path}: {difference.left} -> {difference.right}"}
+return {"output": "the two are the same"}
+```
+
+The kind decides how the two things are read: `request`, `response`, `json`,
+`xml`, `html`, `tokens`, `binary` or `text`. With `auto` the comparer guesses
+from the content. The result carries the differences, the similarities and the
+rows of the side by side view.
+
 ## Measuring a token
 
 The sequencer judges how random a token really is. It is not a plugin, but a

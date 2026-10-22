@@ -28,6 +28,7 @@ from intercept.proxy.upstream import UpstreamError
 from intercept.proxy.websocket import WebSocketFrame
 from intercept.scanner.engine import ScanOptions
 from intercept.store.sitemap import ScopeRule
+from intercept.tools.comparer import Comparer, document_from_exchange
 from intercept.tools.decoder import Decoder, DecoderError
 from intercept.tools.fuzzer import ATTACK_TYPES
 from intercept.tools.generators import (
@@ -248,6 +249,29 @@ class DecoderHashPayload(BaseModel):
     algorithm: str = "sha256"
     #: The key of the keyed digests.
     key: str = ""
+
+
+class ComparerPayload(BaseModel):
+    """Two things to put next to each other."""
+
+    left: str = ""
+    right: str = ""
+    #: The kind of comparison, or "auto" to let the comparer guess.
+    kind: str = "auto"
+    #: The content type of the two things, which helps with guessing.
+    content_type: str = ""
+    #: Whether the two things are given as base64, which is how a file travels.
+    base64: bool = False
+
+
+class ComparerExchangePayload(BaseModel):
+    """Two exchanges to put next to each other."""
+
+    left_id: str = ""
+    right_id: str = ""
+    kind: str = "auto"
+    #: The part of the exchange: the request, the response or the body.
+    part: str = "auto"
 
 
 class ScanJobPayload(BaseModel):
@@ -1425,6 +1449,45 @@ def create_api(app: InterceptApp) -> FastAPI:
             raise HTTPException(status_code=400, detail="no samples given")
         report = Sequencer().analyse(samples, kind=payload.kind, name=payload.name)
         return report.to_dict()
+
+    # ------------------------------------------------------------ comparer
+
+    @router.get("/comparer/kinds")
+    async def list_comparison_kinds() -> dict[str, Any]:
+        """The kinds of comparison the comparer knows."""
+        return Comparer().catalog()
+
+    @router.post("/comparer/compare")
+    async def compare_values(payload: ComparerPayload) -> dict[str, Any]:
+        """Two things, next to each other."""
+        if payload.base64:
+            try:
+                left = base64.b64decode(payload.left)
+                right = base64.b64decode(payload.right)
+            except (ValueError, TypeError) as exc:
+                raise HTTPException(status_code=400, detail=f"not base64: {exc}") from exc
+            return Comparer().compare_bytes(left, right, payload.kind)
+        return Comparer().compare(
+            payload.left,
+            payload.right,
+            payload.kind,
+            payload.content_type,
+        )
+
+    @router.post("/comparer/exchanges")
+    async def compare_exchanges(payload: ComparerExchangePayload) -> dict[str, Any]:
+        """Two exchanges from the history, next to each other."""
+        left = await app.store.get(payload.left_id)
+        right = await app.store.get(payload.right_id)
+        if left is None or right is None:
+            raise HTTPException(status_code=404, detail="exchange not found")
+        part = payload.part if payload.part != "auto" else "response"
+        left_bytes, left_type = document_from_exchange(left, part)
+        right_bytes, right_type = document_from_exchange(right, part)
+        kind = payload.kind
+        if kind == "auto" and part in {"request", "response"}:
+            kind = part
+        return Comparer().compare_bytes(left_bytes, right_bytes, kind)
 
     # ------------------------------------------------------------- decoder
 

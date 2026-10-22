@@ -507,6 +507,41 @@ export interface SequencerReport {
   notes: string[];
 }
 
+/* --------------------------------------------------------------- comparer */
+
+export interface CompareDifference {
+  kind: string;
+  path: string;
+  left: string;
+  right: string;
+  note: string;
+}
+
+export interface CompareSimilarity {
+  kind: string;
+  path: string;
+  value: string;
+}
+
+export interface CompareRow {
+  left: string | null;
+  right: string | null;
+  kind: string;
+  left_span: number[] | null;
+  right_span: number[] | null;
+}
+
+export interface Comparison {
+  kind: string;
+  identical: boolean;
+  left_size: number;
+  right_size: number;
+  differences: CompareDifference[];
+  similarities: CompareSimilarity[];
+  rows: CompareRow[];
+  summary: string;
+}
+
 /* ------------------------------------------------------------------ workspace */
 export interface CommandDescriptor {
   id: string;

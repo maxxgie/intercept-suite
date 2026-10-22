@@ -1,65 +1,96 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { api } from "../lib/api";
 import { useStore } from "../state/store";
-import type { ExchangeSummary } from "../types";
+import type { Comparison } from "../types";
 
-type Side = "request" | "response";
+type Part = "request" | "response" | "body";
+type Panel = "side" | "differences" | "similarities";
+
+const PARTS: { id: Part; label: string }[] = [
+  { id: "request", label: "The request" },
+  { id: "response", label: "The response" },
+  { id: "body", label: "The body" },
+];
+
+const KINDS: { id: string; label: string }[] = [
+  { id: "auto", label: "Guess" },
+  { id: "text", label: "Text" },
+  { id: "json", label: "JSON" },
+  { id: "xml", label: "XML" },
+  { id: "html", label: "HTML" },
+  { id: "tokens", label: "Tokens" },
+  { id: "binary", label: "Binary" },
+];
+
+/** The line of a row, with the part that changed marked. */
+function marked(text: string | null, span: number[] | null) {
+  if (text === null) return null;
+  if (!span || span.length !== 2) return text;
+  const [start, end] = span;
+  const before = text.slice(0, start);
+  const middle = text.slice(start, end);
+  const after = text.slice(end);
+  return (
+    <>
+      {before}
+      <mark>{middle}</mark>
+      {after}
+    </>
+  );
+}
 
 /**
- * Put two exchanges next to each other and mark the lines that differ.
+ * Put two things next to each other.
+ *
+ * The comparison itself is made by the daemon, which knows the shapes that
+ * turn up in web traffic: a request, a response, a body that is JSON, XML or
+ * HTML, a set of tokens and a file that is not text.
  */
 export default function ComparerView() {
   const traffic = useStore((s) => s.traffic);
   const select = useStore((s) => s.select);
+
   const [left, setLeft] = useState<string | null>(null);
   const [right, setRight] = useState<string | null>(null);
-  const [side, setSide] = useState<Side>("response");
+  const [part, setPart] = useState<Part>("response");
+  const [kind, setKind] = useState("auto");
+  const [panel, setPanel] = useState<Panel>("side");
+  const [comparison, setComparison] = useState<Comparison | null>(null);
+  const [error, setError] = useState("");
 
   const rows = traffic.slice(0, 200);
 
-  const leftRow = rows.find((row) => row.id === left) ?? null;
-  const rightRow = rows.find((row) => row.id === right) ?? null;
-
-  const comparison = useMemo(() => {
-    if (!leftRow || !rightRow) return null;
-    const a = describe(leftRow);
-    const b = describe(rightRow);
-    const rowsOut: { left: string; right: string; same: boolean }[] = [];
-    const length = Math.max(a.length, b.length);
-    for (let index = 0; index < length; index += 1) {
-      const lineA = a[index] ?? "";
-      const lineB = b[index] ?? "";
-      rowsOut.push({ left: lineA, right: lineB, same: lineA === lineB });
+  const refresh = useCallback(async () => {
+    if (!left || !right) {
+      setComparison(null);
+      return;
     }
-    return {
-      rows: rowsOut,
-      different: rowsOut.filter((row) => !row.same).length,
-    };
-  }, [leftRow, rightRow]);
-
-  function describe(row: ExchangeSummary): string[] {
-    if (side === "request") {
-      return [
-        `${row.method} ${row.url}`,
-        `host: ${row.host}`,
-        `port: ${row.port}`,
-        `scheme: ${row.scheme}`,
-        `request length: ${row.request_length}`,
-        `type: ${row.mime_type}`,
-      ];
+    setError("");
+    try {
+      const data = await api.post<Comparison>("/api/comparer/exchanges", {
+        left_id: left,
+        right_id: right,
+        kind,
+        part,
+      });
+      setComparison(data);
+    } catch (failure) {
+      setError((failure as Error).message);
+      setComparison(null);
     }
-    return [
-      `status: ${row.status || "ERR"} ${row.reason}`,
-      `type: ${row.mime_type}`,
-      `length: ${row.response_length}`,
-      `time: ${row.elapsed_ms.toFixed(0)} ms`,
-      `error: ${row.error || "none"}`,
-    ];
-  }
+  }, [left, right, kind, part]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   function pick(id: string, slot: "left" | "right") {
     if (slot === "left") setLeft(id);
     else setRight(id);
   }
+
+  const leftRow = rows.find((row) => row.id === left) ?? null;
+  const rightRow = rows.find((row) => row.id === right) ?? null;
 
   return (
     <div className="comparer-view">
@@ -67,20 +98,28 @@ export default function ComparerView() {
         <section className="pane list-pane">
           <div className="pane-header">
             <span className="grow">Pick two exchanges</span>
-            <div className="seg">
-              <button
-                className={side === "request" ? "seg-item active" : "seg-item"}
-                onClick={() => setSide("request")}
-              >
-                Request
-              </button>
-              <button
-                className={side === "response" ? "seg-item active" : "seg-item"}
-                onClick={() => setSide("response")}
-              >
-                Response
-              </button>
-            </div>
+            <select
+              className="filter"
+              value={part}
+              onChange={(event) => setPart(event.target.value as Part)}
+            >
+              {PARTS.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+            <select
+              className="filter"
+              value={kind}
+              onChange={(event) => setKind(event.target.value)}
+            >
+              {KINDS.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="table-wrap">
             <table className="traffic-table">
@@ -145,28 +184,49 @@ export default function ComparerView() {
                 : "Pick two exchanges to compare"}
             </span>
             {comparison && (
-              <span className={comparison.different ? "status warn" : "status ok"}>
-                {comparison.different} difference{comparison.different === 1 ? "" : "s"}
+              <>
+                <span className="muted small">{comparison.kind}</span>
+                <span className={comparison.identical ? "status ok" : "status warn"}>
+                  {comparison.summary}
+                </span>
+              </>
+            )}
+          </div>
+
+          <div className="pane-header">
+            <div className="seg">
+              <button
+                className={panel === "side" ? "seg-item active" : "seg-item"}
+                onClick={() => setPanel("side")}
+              >
+                Side by side
+              </button>
+              <button
+                className={panel === "differences" ? "seg-item active" : "seg-item"}
+                onClick={() => setPanel("differences")}
+              >
+                Differences
+                {comparison ? ` (${comparison.differences.length})` : ""}
+              </button>
+              <button
+                className={panel === "similarities" ? "seg-item active" : "seg-item"}
+                onClick={() => setPanel("similarities")}
+              >
+                Similarities
+                {comparison ? ` (${comparison.similarities.length})` : ""}
+              </button>
+            </div>
+            <span className="grow" />
+            {comparison && (
+              <span className="muted small">
+                {comparison.left_size} and {comparison.right_size} bytes
               </span>
             )}
           </div>
 
-          {comparison ? (
-            <div className="compare-grid">
-              <div className="compare-head">A</div>
-              <div className="compare-head">B</div>
-              {comparison.rows.map((row, index) => (
-                <div className="compare-row" key={index}>
-                  <div className={row.same ? "compare-cell" : "compare-cell different"}>
-                    {row.left}
-                  </div>
-                  <div className={row.same ? "compare-cell" : "compare-cell different"}>
-                    {row.right}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
+          {error && <div className="banner error">{error}</div>}
+
+          {!comparison ? (
             <div className="placeholder">
               Choose one exchange for A and one for B. The differences are marked.
               <button
@@ -180,6 +240,87 @@ export default function ComparerView() {
               >
                 Use the first two
               </button>
+            </div>
+          ) : panel === "side" ? (
+            <div className="compare-grid">
+              <div className="compare-head">A</div>
+              <div className="compare-head">B</div>
+              {comparison.rows.map((row, index) => (
+                <div className="compare-row" key={index}>
+                  <div className={`compare-cell ${row.kind}`}>
+                    {marked(row.left, row.left_span)}
+                  </div>
+                  <div className={`compare-cell ${row.kind}`}>
+                    {marked(row.right, row.right_span)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : panel === "differences" ? (
+            <div className="table-wrap">
+              <table className="traffic-table">
+                <thead>
+                  <tr>
+                    <th className="col-method">Where</th>
+                    <th className="col-host">A</th>
+                    <th className="col-host">B</th>
+                    <th className="col-path">What</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {comparison.differences.map((difference, index) => (
+                    <tr key={index}>
+                      <td className="col-method" title={difference.kind}>
+                        {difference.path}
+                      </td>
+                      <td className="col-host mono" title={difference.left}>
+                        {difference.left.slice(0, 120)}
+                      </td>
+                      <td className="col-host mono" title={difference.right}>
+                        {difference.right.slice(0, 120)}
+                      </td>
+                      <td className="col-path">{difference.note}</td>
+                    </tr>
+                  ))}
+                  {comparison.differences.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="empty">
+                        The two are the same.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table className="traffic-table">
+                <thead>
+                  <tr>
+                    <th className="col-method">Where</th>
+                    <th className="col-path">The same</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {comparison.similarities.map((similarity, index) => (
+                    <tr key={index}>
+                      <td className="col-method" title={similarity.kind}>
+                        {similarity.path}
+                      </td>
+                      <td className="col-path mono" title={similarity.value}>
+                        {similarity.value.slice(0, 160)}
+                      </td>
+                    </tr>
+                  ))}
+                  {comparison.similarities.length === 0 && (
+                    <tr>
+                      <td colSpan={2} className="empty">
+                        Nothing is the same.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           )}
 

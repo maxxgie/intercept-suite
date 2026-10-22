@@ -97,6 +97,10 @@ tokens that hold a clock, and the forgery of a JSON web token.
 directions, the digests, the recognition of a hash, the chains and the smart
 decode.
 
+`tests/test_comparer.py` covers the comparer: the line diff and the part of a
+line that changed, the differences and the similarities for JSON, XML, HTML,
+tokens and files, and the comparison of two exchanges from the history.
+
 `tests/test_workspace.py` covers the workspace layer: the filter language, the
 command registry, the event log, the notes, the issues, the sessions, the
 targets, the tasks, the projects, the report generator, the WebSocket framing
@@ -196,6 +200,24 @@ API turns that into a message that says why. A kind that is added to
 `TRANSFORM_KINDS` and to `KIND_LABELS` shows up in the interface, in the
 example plugin and in the smart decode, which tries every kind and ranks the
 answers.
+
+## Adding a comparison to the comparer
+
+The comparer lives in `src/intercept/tools/comparer.py`. A comparison is a
+function that takes the two things and gives back the differences and the
+similarities:
+
+```python
+def _my_differences(left: list[str], right: list[str]) -> tuple[list[Difference], list[Similarity]]:
+    """What is not the same and what is."""
+    ...
+```
+
+A new kind is added to `COMPARISON_KINDS`, and the branch in `compare_bytes`
+that reads the two things calls the new function. The `Difference` and the
+`Similarity` carry a `kind`, so the interface can tell a difference in a
+header from a difference in a body, a `path` that says where the difference
+sits and the two values.
 
 ## Adding a scanner check
 
