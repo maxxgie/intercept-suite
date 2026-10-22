@@ -35,6 +35,7 @@ from intercept.scanner.authsec import (
 from intercept.scanner.base import ActiveCheck, CheckInfo, PassiveCheck
 from intercept.scanner.graphql import GraphqlCheck
 from intercept.scanner.injection import INJECTION_CHECKS
+from intercept.scanner.oob import CollaboratorCheck
 from intercept.scanner.target import Endpoint
 from intercept.tools.client import ToolClient
 
@@ -549,6 +550,7 @@ BUILTIN_CHECKS: list[Any] = [
     OAuthCheck(),
     IdorCheck(),
     GraphqlCheck(),
+    CollaboratorCheck(),
     *INJECTION_CHECKS,
 ]
 

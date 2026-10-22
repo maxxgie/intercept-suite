@@ -166,6 +166,14 @@ export const IconSequencer = (props: IconProps) => (
   </Glyph>
 );
 
+export const IconCollaborator = (props: IconProps) => (
+  <Glyph {...props}>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />
+    <path d="M6.5 6.5l2 2M15.5 15.5l2 2M17.5 6.5l-2 2M8.5 15.5l-2 2" />
+  </Glyph>
+);
+
 export const IconLogger = (props: IconProps) => (
   <Glyph {...props}>
     <path d="M5 4h14v16H5z" />

@@ -32,6 +32,7 @@ def register_builtin(app: InterceptApp) -> CommandRegistry:
         ("fuzzer", "Fuzzer"),
         ("scanner", "Scanner"),
         ("findings", "Findings"),
+        ("collaborator", "Collaborator"),
         ("issues", "Issue tracker"),
         ("notes", "Notes and highlights"),
         ("organizer", "Organizer"),

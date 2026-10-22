@@ -38,6 +38,7 @@ from intercept.store.targets import TargetStore
 from intercept.store.tasks import Scheduler, TaskStore
 from intercept.store.websockets import WebSocketStore
 from intercept.tools.client import ToolClient
+from intercept.tools.collaborator import Collaborator
 from intercept.tools.fuzzer import Fuzzer
 from intercept.tools.repeater import Repeater
 from intercept.tools.spider import Spider
@@ -90,7 +91,14 @@ class InterceptApp:
         self.repeater = Repeater(self.client, self.bus)
         self.spider = Spider(self.client, self.scope, config, self.bus)
         self.fuzzer = Fuzzer(self.client, self.bus, config)
-        self.scanner = Scanner(self.client, self.bus, self.finding_store, config)
+        self.collaborator = Collaborator(config.collaborator, self.bus)
+        self.scanner = Scanner(
+            self.client,
+            self.bus,
+            self.finding_store,
+            config,
+            collaborator=self.collaborator,
+        )
 
         self.plugins = PluginManager(
             home,
@@ -114,6 +122,7 @@ class InterceptApp:
         await self.store.start()
         self.rules.set_rules(await self.rule_store.list())
         await self.proxy.start()
+        await self._start_collaborator()
         self.plugins.load_all()
         for check in self.plugins.checks.values():
             self.scanner.register_check(check)
@@ -131,11 +140,52 @@ class InterceptApp:
             await with_suppress
         except Exception:
             log.debug("failed to stop spider cleanly", exc_info=True)
+        await self.collaborator.stop()
         await self.proxy.stop()
         await self.store.stop()
         self.finding_store.close()
         self.log.record("info", "app", "the daemon stopped")
         self.bus.emit("app.stopped")
+
+    async def _start_collaborator(self) -> None:
+        """Open the collaborator, unless it was turned off.
+
+        A collaborator that cannot listen is not a reason to refuse to start,
+        so the failure is recorded and the daemon carries on without it.
+        """
+        if not self.config.collaborator.enabled:
+            return
+        try:
+            await self.collaborator.start()
+        except Exception as exc:  # noqa: BLE001 - the daemon must still start
+            log.warning("the collaborator did not start: %s", exc)
+            self.log.record(
+                "warning",
+                "collaborator",
+                "the collaborator did not start",
+                {"detail": str(exc)},
+            )
+
+    async def _restart_collaborator(self) -> None:
+        """Open the collaborator again, so a new setting takes effect.
+
+        The ports and the address are read when the listeners are opened, so
+        a change to them needs a new set of listeners. The calls that were
+        already heard are kept.
+        """
+        await self.collaborator.stop()
+        await self._start_collaborator()
+
+    def _collaborator_settings(self) -> tuple[Any, ...]:
+        """The settings that the listeners of the collaborator depend on."""
+        collaborator = self.config.collaborator
+        return (
+            collaborator.host,
+            collaborator.port,
+            collaborator.dns_port,
+            collaborator.smtp_port,
+            collaborator.dns_address,
+        )
 
     async def _run_task(self, command: str, args: dict[str, Any]) -> Any:
         """Run a scheduled task through the command registry."""
@@ -228,6 +278,7 @@ class InterceptApp:
                 "path": str(self.ca.root_cert_path),
             },
             "intercept": self.intercept.state(),
+            "collaborator": self.collaborator.status(),
             "plugins": [info.to_dict() for info in self.plugins.plugins.values()],
             "tools": self.plugins.describe_tools(),
             "checks": self.scanner.catalog(),

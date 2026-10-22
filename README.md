@@ -35,6 +35,9 @@ browser  ──HTTP(S)/2──▶  proxy engine  ──HTTP(S)/2──▶  origi
 | Scanner: injection, auth, token, GraphQL and web hardening checks | Working |
 | Sequencer: judge how random a token really is, over many samples | Working |
 | Sequencer: find a counter, a clock or a weak secret behind a token | Working |
+| Collaborator: a server that waits for the target to call back | Working |
+| Collaborator: HTTP, DNS and SMTP interactions, with the payloads to cause them | Working |
+| Scanner: blind flaws found by waiting for the callback | Working |
 | Decoder: URL, HTML, base64, base32, hex, ASCII, binary, gzip, deflate, unicode, JWT | Working |
 | Decoder: hash generation, smart decode and chained transforms | Working |
 | Comparer: two requests, responses, bodies or files, side by side | Working |
@@ -218,6 +221,12 @@ command palette (`Ctrl K`).
   left out of the measures, because a fixed prefix is not randomness. The
   verdict is *random*, *weak* or *predictable*, and every measure that led to
   it is shown next to the reason.
+* **Collaborator** waits for the target to call back. A blind flaw does not
+  answer in the request that caused it: the target takes the payload, does
+  something with it and only then reaches out. The collaborator is the server
+  that waits for that call. It answers over HTTP, over DNS and over SMTP, it
+  writes down everything that arrives, and it hands out the payloads that
+  cause the call in the first place.
 
 **Work**
 
@@ -281,6 +290,59 @@ tried and compared with what came before.
 
 A body that is not text keeps its bytes: it travels as base64 and reaches the
 interface unchanged, so the hex view shows what was really on the wire.
+
+### The collaborator
+
+**Collaborator** is a small server that waits to be called. A payload that
+points at it makes the target reach out, and whatever arrives is written down,
+so a blind flaw can be shown to be there.
+
+It answers three kinds of call:
+
+| Call | What it is for |
+| --- | --- |
+| HTTP | A blind SSRF, a blind XXE or a blind RCE |
+| DNS | A blind SQL injection, and a target that cannot reach it over HTTP |
+| SMTP | A target that is told to send mail |
+
+Every call carries a token, and the token is what ties a call to the payload
+that caused it. The payload is built by the same code that listens for the
+call, so the two can never drift apart.
+
+The payloads come in seven kinds, and each of them says what it is meant to
+prove:
+
+| Kind | The payload |
+| --- | --- |
+| HTTP callback | The URL of the collaborator |
+| Blind XXE | An XML document with an entity that points at it |
+| Blind SSRF | The URL, put where the target fetches it |
+| Blind SQL injection | A fragment that makes the database read the URL |
+| Blind RCE | A command that reaches out to it |
+| DNS interaction | A name under the collaborator domain |
+| SMTP interaction | An address the target sends mail to |
+
+The scanner uses the same payloads. Its **out of band interaction** check puts
+a callback into the parameters of an endpoint, waits for the target to call
+back and reports a finding when one arrives — which is how a blind XXE, a
+blind SSRF, a blind SQL injection and a blind RCE give themselves away even
+though the answer itself carries nothing.
+
+The address the target should call is a setting. On a machine of your own it
+is `127.0.0.1`; to catch a target that is somewhere else, put the address of
+a machine that can be reached from the target into `collaborator.public_host`.
+
+The three listeners are opened on the ports a target expects. The DNS one
+takes port 53, and falls back to 15353; the SMTP one takes port 25, and falls
+back to 2525. A port of zero in the configuration means that the listener
+looks for a free port of its own, which is what a machine that is only
+reached by itself needs. A target that is somewhere else needs the real
+ports, so the daemon has to run where they can be bound.
+
+How long the check waits for the call is a setting as well:
+`collaborator.wait` holds the number of seconds, and 5 is the default. A
+change to the ports takes effect at once: the listeners are opened again
+when the settings change, and the calls that were already heard are kept.
 
 ### Rules
 
@@ -356,7 +418,7 @@ src/intercept/        the engine
   crypto/             certificate authority and trust store installation
   proxy/              the proxy engine: parser, HTTP/2, upstream pool, interception, websockets
   store/              traffic history, findings, notes, issues, targets, tasks, projects, sessions
-  tools/              repeater, fuzzer, sequencer, decoder, comparer, spider, client
+  tools/              repeater, fuzzer, sequencer, decoder, comparer, collaborator, spider, client
   scanner/            check framework and scan engine
   plugins/            plugin API and manager
   api/                REST and WebSocket API

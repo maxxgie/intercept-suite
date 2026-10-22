@@ -3,6 +3,7 @@ import ActivityView from "./components/ActivityView";
 import BottomPanel from "./components/BottomPanel";
 import BrowserView from "./components/BrowserView";
 import CommandPalette from "./components/CommandPalette";
+import CollaboratorView from "./components/CollaboratorView";
 import ComparerView from "./components/ComparerView";
 import ContextMenu from "./components/ContextMenu";
 import DashboardView from "./components/DashboardView";
@@ -103,6 +104,11 @@ export default function App() {
         case "websocket.opened":
         case "websocket.message":
           void refreshWebsockets();
+          break;
+        case "collaborator.interaction":
+          if (useStore.getState().view === "collaborator") {
+            void useStore.getState().refreshCollaborator();
+          }
           break;
         default:
           break;
@@ -206,6 +212,7 @@ export default function App() {
             {view === "comparer" && <ComparerView />}
             {view === "tokens" && <TokenAnalysisView />}
             {view === "sequencer" && <SequencerView />}
+            {view === "collaborator" && <CollaboratorView />}
             {view === "issues" && <IssuesView />}
             {view === "notes" && <NotesView />}
             {view === "organizer" && <OrganizerView />}

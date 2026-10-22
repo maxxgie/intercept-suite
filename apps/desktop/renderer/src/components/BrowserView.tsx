@@ -33,6 +33,8 @@ export default function BrowserView() {
   const [busy, setBusy] = useState(false);
   const [response, setResponse] = useState<ResponseDetail | null>(null);
   const [history, setHistory] = useState<BrowserHistory[]>([]);
+  const [stack, setStack] = useState<string[]>([]);
+  const [index, setIndex] = useState(-1);
   const addTab = useStore((s) => s.addTab);
   const setError = useStore((s) => s.setError);
 
@@ -73,6 +75,12 @@ export default function BrowserView() {
         );
       }
       await api.delete(`/api/repeater/tabs/${tab.id}`);
+      setStack((current) => {
+        const next = current.slice(0, index + 1);
+        next.push(address);
+        setIndex(next.length - 1);
+        return next;
+      });
     } catch (error) {
       setError((error as Error).message);
     } finally {
@@ -100,6 +108,15 @@ export default function BrowserView() {
     <div className="split">
       <section className="pane list-pane">
         <div className="pane-header browser-bar">
+          <button className="button" disabled={index <= 0 || busy} onClick={() => { const u = stack[index - 1]; if (u) { setUrl(u); void visit(u); } }}>
+            Back
+          </button>
+          <button className="button" disabled={index >= stack.length - 1 || busy} onClick={() => { const u = stack[index + 1]; if (u) { setUrl(u); void visit(u); } }}>
+            Fwd
+          </button>
+          <button className="button" disabled={busy || !url.trim()} onClick={() => void visit(url)}>
+            Reload
+          </button>
           <input
             className="filter mono grow"
             placeholder="http://example.com"

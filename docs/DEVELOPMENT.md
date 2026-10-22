@@ -101,6 +101,10 @@ decode.
 line that changed, the differences and the similarities for JSON, XML, HTML,
 tokens and files, and the comparison of two exchanges from the history.
 
+`tests/test_collaborator.py` covers the collaborator: the payloads it builds,
+the calls that arrive over HTTP, over DNS and over SMTP, the API on top of it
+and the out of band check that waits for a callback.
+
 `tests/test_workspace.py` covers the workspace layer: the filter language, the
 command registry, the event log, the notes, the issues, the sessions, the
 targets, the tasks, the projects, the report generator, the WebSocket framing
@@ -265,6 +269,54 @@ replaced and calls `detect` to judge the answer.
 Register a check by adding an instance to `BUILTIN_CHECKS`. A plugin can
 register a check through `api.add_check(...)` instead; the scanner picks up
 every registered check when the daemon starts.
+
+## Working with the collaborator
+
+The collaborator lives in `src/intercept/tools/collaborator.py`. It is opened
+when the daemon starts, unless `collaborator.enabled` is turned off in the
+configuration, and it listens on three ports: the HTTP one, the DNS one and
+the SMTP one. A port of zero means that a free port is picked, and the DNS
+one falls back to 53 and then to 15353. The SMTP one falls back to 25 and
+then to 2525, because a mail address cannot carry a port, so a listener on a
+random one could never be reached.
+
+```python
+from intercept.core.config import CollaboratorConfig
+from intercept.tools.collaborator import Collaborator
+
+server = Collaborator(CollaboratorConfig(port=9001))
+await server.start()
+payload = server.payload("http")          # the payload that makes the call
+interaction = await server.wait_for([payload["token"]], timeout=5)
+```
+
+`payload()` returns the token, the URL and the payload itself, and the token
+is the same one that comes back with the call. It also returns the address of
+the DNS and the SMTP server, because a name is only useful when the target
+knows where to ask for it.
+
+`wait_for()` takes the length of the wait from the configuration when no
+number is given, so `collaborator.wait` decides how long a check waits for a
+call.
+
+A check that needs the collaborator says so with `needs_collaborator = True`,
+and the scanner hands it over before the check runs:
+
+```python
+class MyCheck(ActiveCheck):
+    needs_collaborator = True
+    collaborator: Any = None
+```
+
+The built in checks are shared between scanners, so the scanner always hands
+over the collaborator it holds, even when the check already has one.
+
+The addresses the target should call are settings in the `collaborator`
+section of the configuration: `public_host` is the address the payload points
+at, `dns_address` is the address the DNS answers point at and `domain` is the
+domain the names sit under. The ports are read when the listeners are
+opened, so a change to them opens the listeners again; the calls that were
+already heard are kept.
 
 ## Packaging
 

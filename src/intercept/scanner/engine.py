@@ -133,11 +133,14 @@ class Scanner:
         bus: EventBus,
         findings: FindingStore,
         config: Any = None,
+        collaborator: Any = None,
     ) -> None:
         self.client = client
         self.bus = bus
         self.findings = findings
         self.config = config
+        #: The server that waits for a blind flaw to call back.
+        self.collaborator = collaborator
         self._jobs: dict[str, ScanJob] = {}
         self._counter = itertools.count(1)
         self._checks: dict[str, Any] = {c.id: c for c in BUILTIN_CHECKS}
@@ -370,9 +373,23 @@ class Scanner:
         run = getattr(check, "run", None)
         if run is None:
             return []
+        self._hand_over(check)
         if self._takes_url(check):
             return await run(self.client, target.url)
         return await run(self.client, target)
+
+    def _hand_over(self, check: Any) -> None:
+        """Give a check the collaborator, when it needs one.
+
+        The check needs the server that waits for a callback, and the scanner
+        is the one that holds it. The server of this scanner is always the one
+        that is handed over, because the built in checks are shared between
+        scanners and a stale one would make a check wait on the wrong server.
+        """
+        if not getattr(check, "needs_collaborator", False):
+            return
+        with contextlib.suppress(AttributeError):
+            check.collaborator = self.collaborator
 
     def _takes_url(self, check: Any) -> bool:
         cached = getattr(check, "_intercept_takes_url", None)

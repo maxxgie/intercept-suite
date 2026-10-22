@@ -305,6 +305,7 @@ export interface AppConfig {
   proxy: ProxyConfig;
   api: ApiConfig;
   scan: ScanConfig;
+  collaborator: CollaboratorConfig;
   home: string;
   log_level: string;
 }
@@ -313,6 +314,7 @@ export interface DaemonState {
   proxy: { host: string; port: number; upstream_verify: boolean; http2: boolean };
   ca: { subject: string; fingerprint: string; path: string };
   intercept: InterceptState;
+  collaborator: CollaboratorStatus;
   plugins: PluginInfo[];
   tools: ToolDescriptor[];
   checks: CheckDescriptor[];
@@ -540,6 +542,61 @@ export interface Comparison {
   similarities: CompareSimilarity[];
   rows: CompareRow[];
   summary: string;
+}
+
+/* ------------------------------------------------------------- collaborator */
+
+export interface CollaboratorConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  public_host: string;
+  dns_port: number;
+  dns_address: string;
+  smtp_port: number;
+  domain: string;
+  wait: number;
+}
+
+export interface CollaboratorStatus {
+  running: boolean;
+  host: string;
+  public_host: string;
+  port: number;
+  url: string;
+  dns_port: number;
+  dns_server: string;
+  domain: string;
+  smtp_port: number;
+  smtp_host: string;
+  smtp_server: string;
+  interactions: number;
+  wait: number;
+  kinds: { kind: string; label: string }[];
+}
+
+export interface CollaboratorInteraction {
+  id: string;
+  kind: string;
+  token: string;
+  at: number;
+  peer: string;
+  detail: string;
+  headers: Record<string, string>;
+  body: string;
+  raw: string;
+}
+
+export interface CollaboratorPayload {
+  kind: string;
+  label: string;
+  token: string;
+  url: string;
+  hostname: string;
+  mail: string;
+  payload: string;
+  dns_server: string;
+  smtp_server: string;
 }
 
 /* ------------------------------------------------------------------ workspace */

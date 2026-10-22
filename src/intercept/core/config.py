@@ -13,7 +13,15 @@ from dataclasses import MISSING, asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any, get_args, get_origin, get_type_hints
 
-__all__ = ["Config", "ProxyConfig", "ApiConfig", "ScanConfig", "state_dir", "load_config"]
+__all__ = [
+    "Config",
+    "ProxyConfig",
+    "ApiConfig",
+    "ScanConfig",
+    "CollaboratorConfig",
+    "state_dir",
+    "load_config",
+]
 
 
 def state_dir() -> Path:
@@ -133,10 +141,53 @@ class ScanConfig:
 
 
 @dataclass
+class CollaboratorConfig:
+    """Settings for the collaborator.
+
+    The collaborator is a small server that waits to be called. A payload that
+    points at it makes the target reach out, and whatever arrives is written
+    down, so a blind flaw can be shown to be there.
+
+    The three listeners are separate:
+
+    * the **HTTP** one takes the callbacks that a blind SSRF, a blind XXE or a
+      blind RCE makes;
+    * the **DNS** one takes the queries that a blind SQL injection often makes,
+      and that a target makes when it cannot reach the collaborator over HTTP;
+    * the **SMTP** one takes the mail that a target sends when it is told to.
+
+    A port of zero means that the listener is opened on the port a target
+    expects: a free one for HTTP, 53 and then 15353 for DNS, and 25 and then
+    2525 for SMTP. A mail address cannot carry a port, so the SMTP listener
+    is never put on a random one.
+    """
+
+    #: Start the collaborator when the daemon starts.
+    enabled: bool = True
+    #: The address the collaborator listens on.
+    host: str = "127.0.0.1"
+    #: The port for the HTTP callbacks. Zero picks a free one.
+    port: int = 0
+    #: The address the target should call. Empty means the listen address.
+    public_host: str = ""
+    #: The port for the DNS queries. Zero tries 53 and then 15353.
+    dns_port: int = 0
+    #: The address the DNS answers point at.
+    dns_address: str = "127.0.0.1"
+    #: The port for the SMTP calls. Zero tries 25 and then 2525.
+    smtp_port: int = 0
+    #: The domain the DNS names sit under.
+    domain: str = "intercept.local"
+    #: How long the scanner waits for a callback, in seconds.
+    wait: float = 5.0
+
+
+@dataclass
 class Config:
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
     api: ApiConfig = field(default_factory=ApiConfig)
     scan: ScanConfig = field(default_factory=ScanConfig)
+    collaborator: CollaboratorConfig = field(default_factory=CollaboratorConfig)
     #: Directory holding the CA, database and plugins.
     home: str = ""
     #: Log level name.

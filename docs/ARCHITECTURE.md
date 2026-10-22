@@ -201,6 +201,31 @@ The kind decides how the two things are read:
 The side by side view is a line diff, and the part of a line that changed is
 marked so that the eye goes straight to it.
 
+### The collaborator
+
+`tools/collaborator.py` is a server that waits to be called. It answers over
+HTTP, over DNS and over SMTP, and it writes down everything that arrives.
+
+The point of it is that a blind flaw does not answer in the request that
+caused it: the target takes the payload, does something with it and only then
+reaches out. Every call carries a token, and the token is what ties the call
+to the payload that caused it. The payload is built by the same module that
+listens for the call, so the two cannot drift apart.
+
+The payloads come in seven kinds — a plain URL, an XML entity, a URL for an
+SSRF, a SQL fragment, a command, a DNS name and a mail address — and each of
+them says what it is meant to prove.
+
+The scanner uses the same payloads. `scanner/oob.py` puts a callback into the
+parameters of an endpoint, waits for the target to call back and reports a
+finding when one arrives. The check asks the scanner for the collaborator
+(`Scanner._hand_over`), because the scanner is what holds it.
+
+The settings of the collaborator live in the `collaborator` section of the
+configuration. The ports are read when the listeners are opened, so a change
+to them opens the listeners again (`InterceptApp._restart_collaborator`); the
+calls that were already heard are kept.
+
 ### The scanner
 
 `scanner/checks.py` holds the checks and `scanner/engine.py` runs them. There

@@ -30,6 +30,53 @@ const LISTENER_MODES: { value: ListenerConfig["mode"]; label: string; help: stri
   },
 ];
 
+/**
+ * A setting that is written when the field is left, not on every keystroke.
+ *
+ * A setting that makes the daemon open its listeners again would otherwise
+ * be applied to half a number, and the listener would be opened again for
+ * every key that was pressed.
+ */
+function DeferredSetting({
+  id,
+  label,
+  value,
+  type = "text",
+  step,
+  onCommit,
+}: {
+  id: string;
+  label: string;
+  value: string | number;
+  type?: string;
+  step?: string;
+  onCommit: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+
+  return (
+    <div className="field">
+      <label htmlFor={id}>{label}</label>
+      <input
+        id={id}
+        className="filter"
+        type={type}
+        step={step}
+        min={0}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          if (draft !== String(value)) onCommit(draft);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+        }}
+      />
+    </div>
+  );
+}
+
 export default function SettingsView() {
   const daemon = useStore((s) => s.daemon);
   const connected = useStore((s) => s.connected);
@@ -117,6 +164,17 @@ export default function SettingsView() {
   async function setProxy(changes: Record<string, unknown>) {
     if (!config) return;
     await saveConfig({ proxy: { ...config.proxy, ...changes } });
+  }
+
+  async function setCollaborator(changes: Record<string, unknown>) {
+    if (!config) return;
+    await saveConfig({ collaborator: { ...config.collaborator, ...changes } });
+  }
+
+  async function setCollaboratorField(name: string, value: string) {
+    const numeric = ["port", "dns_port", "smtp_port", "wait"];
+    const changed = numeric.includes(name) ? { [name]: Number(value) || 0 } : { [name]: value };
+    await setCollaborator(changed);
   }
 
   return (
@@ -355,6 +413,90 @@ export default function SettingsView() {
               />
             </div>
           </div>
+        </section>
+      )}
+
+      {config && (
+        <section className="card">
+          <h2>Collaborator</h2>
+          <p className="muted">
+            The collaborator is the server that waits for the target to call back, which is how a
+            blind flaw gives itself away. The address the target should call is set here.
+          </p>
+          <label className="checkline small">
+            <input
+              type="checkbox"
+              checked={config.collaborator.enabled}
+              onChange={(event) => void setCollaborator({ enabled: event.target.checked })}
+            />
+            start the collaborator with the daemon
+          </label>
+          <div className="row wrap">
+            <div className="field">
+              <label htmlFor="collaborator-public-host">Address the target calls</label>
+              <input
+                id="collaborator-public-host"
+                className="filter"
+                value={config.collaborator.public_host}
+                placeholder="the address of this machine"
+                onChange={(event) => setCollaboratorField("public_host", event.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="collaborator-domain">Domain</label>
+              <input
+                id="collaborator-domain"
+                className="filter"
+                value={config.collaborator.domain}
+                onChange={(event) => setCollaboratorField("domain", event.target.value)}
+              />
+            </div>
+            <DeferredSetting
+              id="collaborator-dns-address"
+              label="Address in the DNS answers"
+              value={config.collaborator.dns_address}
+              onCommit={(value) => void setCollaboratorField("dns_address", value)}
+            />
+            <DeferredSetting
+              id="collaborator-port"
+              label="HTTP port"
+              type="number"
+              value={config.collaborator.port}
+              onCommit={(value) => void setCollaboratorField("port", value)}
+            />
+            <DeferredSetting
+              id="collaborator-dns-port"
+              label="DNS port"
+              type="number"
+              value={config.collaborator.dns_port}
+              onCommit={(value) => void setCollaboratorField("dns_port", value)}
+            />
+            <DeferredSetting
+              id="collaborator-smtp-port"
+              label="SMTP port"
+              type="number"
+              value={config.collaborator.smtp_port}
+              onCommit={(value) => void setCollaboratorField("smtp_port", value)}
+            />
+            <DeferredSetting
+              id="collaborator-wait"
+              label="Wait for the call (seconds)"
+              type="number"
+              step="0.5"
+              value={config.collaborator.wait}
+              onCommit={(value) => void setCollaboratorField("wait", value)}
+            />
+          </div>
+          <span className="muted small">
+            {daemon?.collaborator
+              ? `listening on ${daemon.collaborator.url}`
+              : "the collaborator is not running"}
+          </span>
+          <p className="muted small">
+            A port of zero lets the daemon pick a free one. The DNS listener takes port 53 and the
+            SMTP listener takes port 25 when it can, because a target cannot be told otherwise. A
+            change to the ports takes effect at once.
+          </p>
         </section>
       )}
 

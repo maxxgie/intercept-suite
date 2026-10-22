@@ -553,6 +553,33 @@ def main() -> int:
             report["verdict"],
         )
 
+        # ---- collaborator ----------------------------------------------
+        collaborator = httpx.get(f"{api}/api/collaborator", timeout=5).json()
+        check("the collaborator is listening", collaborator["running"] is True)
+        check(
+            "the collaborator publishes its kinds",
+            len(collaborator["kinds"]) == 7,
+            str(len(collaborator["kinds"])),
+        )
+        payload = httpx.post(
+            f"{api}/api/collaborator/payload",
+            json={"kind": "http", "target": "", "extra": ""},
+            timeout=5,
+        ).json()
+        check("a payload is built", bool(payload["token"]) and bool(payload["url"]))
+        httpx.get(payload["url"], timeout=5)
+        time.sleep(0.4)
+        heard = httpx.get(f"{api}/api/collaborator/interactions", timeout=5).json()
+        check(
+            "the call is recorded",
+            any(item["token"] == payload["token"] for item in heard["items"]),
+            str(heard["items"])[:120],
+        )
+        check(
+            "the out of band check is published",
+            any(c["id"] == "oob-callback" for c in checks),
+        )
+
         # ---- workspace -------------------------------------------------
         commands = httpx.get(f"{api}/api/commands", timeout=5).json()
         check("commands are listed", len(commands["commands"]) > 10, str(len(commands["commands"])))

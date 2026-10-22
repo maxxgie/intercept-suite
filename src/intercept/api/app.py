@@ -28,6 +28,7 @@ from intercept.proxy.upstream import UpstreamError
 from intercept.proxy.websocket import WebSocketFrame
 from intercept.scanner.engine import ScanOptions
 from intercept.store.sitemap import ScopeRule
+from intercept.tools.collaborator import COLLABORATOR_KINDS, KIND_LABELS
 from intercept.tools.comparer import Comparer, document_from_exchange
 from intercept.tools.decoder import Decoder, DecoderError
 from intercept.tools.fuzzer import ATTACK_TYPES
@@ -53,6 +54,7 @@ class ConfigPatch(BaseModel):
     proxy: dict[str, Any] | None = None
     api: dict[str, Any] | None = None
     scan: dict[str, Any] | None = None
+    collaborator: dict[str, Any] | None = None
     log_level: str | None = None
 
 
@@ -274,6 +276,17 @@ class ComparerExchangePayload(BaseModel):
     part: str = "auto"
 
 
+class CollaboratorPayload(BaseModel):
+    """The payload that makes the target call the collaborator."""
+
+    #: The kind of payload: http, xxe, ssrf, sqli, rce, dns or smtp.
+    kind: str = "http"
+    #: Where the payload goes: a URL, a parameter, a header or a command.
+    target: str = ""
+    #: Text that is carried along with the call.
+    extra: str = ""
+
+
 class ScanJobPayload(BaseModel):
     targets: list[str] = Field(default_factory=list)
     checks: list[str] = Field(default_factory=list)
@@ -487,8 +500,10 @@ def create_api(app: InterceptApp) -> FastAPI:
 
     @router.put("/config")
     async def put_config(patch: ConfigPatch) -> dict[str, Any]:
+        was_enabled = app.config.collaborator.enabled
+        was_settings = app._collaborator_settings()
         current = app.config.to_dict()
-        for section in ("proxy", "api", "scan"):
+        for section in ("proxy", "api", "scan", "collaborator"):
             value = getattr(patch, section)
             if value:
                 current.setdefault(section, {}).update(value)
@@ -499,6 +514,19 @@ def create_api(app: InterceptApp) -> FastAPI:
         # A listener that was added or removed has to take effect now, and
         # not only after the next restart of the daemon.
         await app.proxy.sync_listeners()
+        # The same goes for the collaborator, which is opened and closed with
+        # the switch that says whether it should run, and which is opened
+        # again when the ports it listens on have changed.
+        if app.config.collaborator.enabled != was_enabled:
+            if app.config.collaborator.enabled:
+                await app._start_collaborator()
+            else:
+                await app.collaborator.stop()
+        elif (
+            app.config.collaborator.enabled
+            and app._collaborator_settings() != was_settings
+        ):
+            await app._restart_collaborator()
         return app.config.to_dict()
 
     # ---------------------------------------------------------- traffic
@@ -1449,6 +1477,71 @@ def create_api(app: InterceptApp) -> FastAPI:
             raise HTTPException(status_code=400, detail="no samples given")
         report = Sequencer().analyse(samples, kind=payload.kind, name=payload.name)
         return report.to_dict()
+
+    # ----------------------------------------------------------- collaborator
+
+    @router.get("/collaborator")
+    async def collaborator_status() -> dict[str, Any]:
+        """What the collaborator is listening on, and what it has heard."""
+        status = app.collaborator.status()
+        status["kinds"] = [
+            {"kind": kind, "label": KIND_LABELS.get(kind, kind)}
+            for kind in COLLABORATOR_KINDS
+        ]
+        return status
+
+    @router.post("/collaborator/payload")
+    async def collaborator_payload(payload: CollaboratorPayload) -> dict[str, Any]:
+        """A payload that makes the target call the collaborator."""
+        if payload.kind not in COLLABORATOR_KINDS:
+            raise HTTPException(status_code=400, detail=f"unknown kind: {payload.kind}")
+        if not app.collaborator.status().get("running"):
+            raise HTTPException(status_code=409, detail="the collaborator is not running")
+        return app.collaborator.payload(payload.kind, payload.target, payload.extra)
+
+    @router.get("/collaborator/interactions")
+    async def collaborator_interactions(
+        kind: str | None = None,
+        token: str | None = None,
+        limit: int = Query(200, ge=1, le=2000),
+    ) -> dict[str, Any]:
+        """The calls that reached the collaborator."""
+        items = app.collaborator.interactions
+        if kind:
+            items = [item for item in items if item.kind == kind]
+        if token:
+            items = [item for item in items if item.token == token]
+        items = list(reversed(items))[:limit]
+        return {
+            "items": [item.to_dict() for item in items],
+            "total": len(app.collaborator.interactions),
+        }
+
+    @router.delete("/collaborator/interactions")
+    async def clear_collaborator_interactions() -> dict[str, Any]:
+        """Throw the recorded calls away."""
+        return {"removed": app.collaborator.clear()}
+
+    @router.post("/collaborator/start")
+    async def start_collaborator() -> dict[str, Any]:
+        """Open the listeners.
+
+        A collaborator that is already running is closed first, so a change to
+        the ports takes effect at once.
+        """
+        if app.collaborator.status().get("running"):
+            await app.collaborator.stop()
+        try:
+            await app.collaborator.start()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return app.collaborator.status()
+
+    @router.post("/collaborator/stop")
+    async def stop_collaborator() -> dict[str, Any]:
+        """Close the listeners."""
+        await app.collaborator.stop()
+        return app.collaborator.status()
 
     # ------------------------------------------------------------ comparer
 

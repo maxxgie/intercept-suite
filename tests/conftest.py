@@ -77,6 +77,11 @@ def config(tmp_path) -> Config:
     config.api.host = "127.0.0.1"
     config.api.port = free_port()
     config.proxy.upstream_verify = False
+    # The collaborator listens on free ports, so a test never fights over one.
+    config.collaborator.host = "127.0.0.1"
+    config.collaborator.port = free_port()
+    config.collaborator.dns_port = free_port()
+    config.collaborator.smtp_port = free_port()
     return config
 
 

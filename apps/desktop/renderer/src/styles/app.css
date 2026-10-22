@@ -1739,6 +1739,78 @@ textarea:focus {
   margin: 10px 12px;
 }
 
+/* ----------------------------------------------------------- collaborator */
+.collaborator {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.collaborator-side {
+  width: 360px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  min-height: 0;
+  overflow: auto;
+}
+
+.collaborator-side .card {
+  margin: 10px 12px;
+}
+
+.collaborator-hint {
+  margin: 0;
+  padding: 0 12px 8px;
+  line-height: 1.45;
+}
+
+.collaborator-payload {
+  padding: 0 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.collaborator-payload pre {
+  margin: 0;
+  padding: 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.collaborator-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.collaborator-main .table-wrap {
+  flex: 1;
+  min-height: 120px;
+}
+
+.collaborator-body {
+  margin: 0 12px 12px;
+  padding: 10px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 240px;
+  overflow: auto;
+}
+
 /* -------------------------------------------------------------- findings */
 
 .findings {

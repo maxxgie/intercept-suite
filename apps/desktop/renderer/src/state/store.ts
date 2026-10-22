@@ -4,6 +4,9 @@ import type {
   AppConfig,
   AttackType,
   CheckDescriptor,
+  CollaboratorInteraction,
+  CollaboratorPayload,
+  CollaboratorStatus,
   CommandDescriptor,
   DashboardData,
   DaemonState,
@@ -55,6 +58,7 @@ export type View =
   | "comparer"
   | "tokens"
   | "sequencer"
+  | "collaborator"
   | "issues"
   | "notes"
   | "organizer"
@@ -127,6 +131,9 @@ interface Store {
   checks: CheckDescriptor[];
   findings: Finding[];
   sequencerReport: SequencerReport | null;
+  collaboratorStatus: CollaboratorStatus | null;
+  collaboratorInteractions: CollaboratorInteraction[];
+  collaboratorPayload: CollaboratorPayload | null;
   /* workspace */
   filter: string;
   filterError: string;
@@ -259,6 +266,14 @@ interface Store {
   acknowledgeFinding(id: string): Promise<void>;
   clearFindings(): Promise<void>;
   analyzeTokens(samples: string[], kind: string, name: string): Promise<void>;
+  refreshCollaborator(): Promise<void>;
+  buildCollaboratorPayload(
+    kind: string,
+    target: string,
+    extra: string,
+  ): Promise<void>;
+  clearCollaboratorInteractions(): Promise<void>;
+  setCollaboratorRunning(running: boolean): Promise<void>;
   /* workspace */
   setFilter(expression: string): Promise<void>;
   refreshCommands(): Promise<void>;
@@ -357,6 +372,9 @@ export const useStore = create<Store>((set, get) => ({
   checks: [],
   findings: [],
   sequencerReport: null,
+  collaboratorStatus: null,
+  collaboratorInteractions: [],
+  collaboratorPayload: null,
   filter: "",
   filterError: "",
   commands: [],
@@ -425,6 +443,7 @@ export const useStore = create<Store>((set, get) => ({
       void get().refreshChecks();
     }
     if (view === "findings") void get().refreshFindings();
+    if (view === "collaborator") void get().refreshCollaborator();
     if (view === "dashboard") void get().refreshDashboard();
     if (view === "logger" || view === "activity") void get().refreshLog();
     if (view === "notes") void get().refreshNotes();
@@ -930,6 +949,57 @@ export const useStore = create<Store>((set, get) => ({
       set({ error: (error as Error).message });
     } finally {
       set({ busy: false });
+    }
+  },
+
+  /* ---------------------------------------------------------- collaborator */
+
+  async refreshCollaborator() {
+    try {
+      const status = await api.get<CollaboratorStatus>("/api/collaborator");
+      const response = await api.get<{ items: CollaboratorInteraction[] }>(
+        "/api/collaborator/interactions?limit=200",
+      );
+      set({
+        collaboratorStatus: status,
+        collaboratorInteractions: response.items,
+      });
+    } catch (error) {
+      set({ error: (error as Error).message });
+    }
+  },
+
+  async buildCollaboratorPayload(kind, target, extra) {
+    set({ busy: true });
+    try {
+      const payload = await api.post<CollaboratorPayload>("/api/collaborator/payload", {
+        kind,
+        target,
+        extra,
+      });
+      set({ collaboratorPayload: payload });
+    } catch (error) {
+      set({ error: (error as Error).message });
+    } finally {
+      set({ busy: false });
+    }
+  },
+
+  async clearCollaboratorInteractions() {
+    try {
+      await api.delete("/api/collaborator/interactions");
+      set({ collaboratorInteractions: [] });
+    } catch (error) {
+      set({ error: (error as Error).message });
+    }
+  },
+
+  async setCollaboratorRunning(running) {
+    try {
+      await api.post(running ? "/api/collaborator/start" : "/api/collaborator/stop", {});
+      await get().refreshCollaborator();
+    } catch (error) {
+      set({ error: (error as Error).message });
     }
   },
 
